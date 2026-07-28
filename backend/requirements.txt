@@ -9,6 +9,6 @@ passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
 pytest
-httpx
+httpx2
 openai
 pgvector
