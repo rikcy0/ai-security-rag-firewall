@@ -72,3 +72,4 @@ Run backend tests from project root:
 
 ```bash
 python -m pytest backend/tests -v
+```
