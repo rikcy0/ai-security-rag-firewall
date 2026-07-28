@@ -56,3 +56,19 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload
+```
+
+If non-Windows:
+
+```bash
+source .venv/bin/activate
+python -m pip install -r backend/requirements.txt
+python -m uvicorn backend.app.main:app --reload
+```
+
+### Tests
+
+Run backend tests from project root:
+
+```bash
+python -m pytest backend/tests -v

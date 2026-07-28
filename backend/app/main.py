@@ -8,7 +8,7 @@ app = FastAPI(
 
 
 @app.get("/")
-def root():
+def root() -> dict[str, str]:
     return {
         "message": "AI Security RAG Firewall API is running",
         "status": "ok",
@@ -16,7 +16,7 @@ def root():
 
 
 @app.get("/health")
-def health_check():
+def health_check() -> dict[str, str]:
     return {
         "status": "healthy",
     }
