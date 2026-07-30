@@ -31,6 +31,7 @@ def test_get_db_closes_session(monkeypatch) -> None:
 
     assert fake_session.closed is True
 
+
 # integration test
 @pytest.mark.integration
 def test_database_accepts_queries() -> None:
@@ -38,3 +39,29 @@ def test_database_accepts_queries() -> None:
         result = connection.execute(text("SELECT 1")).scalar_one()
 
     assert result == 1
+
+@pytest.mark.integration
+def test_pgvector_extension_is_installed() -> None:
+    with database.engine.connect() as connection:
+        version = connection.execute(
+            text(
+                "SELECT extversion "
+                "FROM pg_extension "
+                "WHERE extname = 'vector'"
+            )
+        ).scalar_one()
+
+    assert version == "0.8.2"
+
+@pytest.mark.integration
+def test_pgvector_distance_operator() -> None:
+    with database.engine.connect() as connection:
+        distance = connection.execute(
+            text(
+                "SELECT "
+                "'[1,2,3]'::vector <-> "
+                "'[1,2,4]'::vector"
+            )
+        ).scalar_one()
+
+    assert distance == pytest.approx(1.0)
