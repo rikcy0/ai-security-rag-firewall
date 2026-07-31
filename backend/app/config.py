@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal   #limits a value to a specific set of allowed strings
 
 # pydantic: settings class that controls behavior and hides values
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     backend_port: int = 8000
 
     database_url: SecretStr
+    secret_key: SecretStr = Field(min_length=32)
+    access_token_expire_minutes: int = Field(default=60, ge=1, le=1440)
 
     model_config = SettingsConfigDict(
         env_prefix="RAG_FIREWALL_",
