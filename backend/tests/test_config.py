@@ -3,8 +3,8 @@ from pydantic import ValidationError
 
 from backend.app.config import Settings
 
-# monkeypatch from pytest allows tetsts to temporarily change parts of the program's env
-# Not a dummy model, parts of a test are replaced or modified, then restored
+# monkeypatch temporarily changes environment variables during a test.
+# Pytest restores the original environment after the test finishes.
 
 TEST_SECRET_KEY = "x" * 32
 
