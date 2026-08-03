@@ -17,7 +17,7 @@ PASSWORD_HASH = "$argon2id$test-password-hash"
 def make_registration() -> UserRegistration:
     return UserRegistration(
         username="Alice",
-        password=PLAINTEXT_PASSWORD,
+        password=PLAINTEXT_PASSWORD
     )
 
 
@@ -25,13 +25,13 @@ def test_get_user_by_username_returns_matching_user() -> None:
     database_session = Mock(spec=Session)
     expected_user = User(
         username="alice",
-        password_hash=PASSWORD_HASH,
+        password_hash=PASSWORD_HASH
     )
     database_session.scalar.return_value = expected_user
 
     result = auth_service.get_user_by_username(
         database_session,
-        "alice",
+        "alice"
     )
 
     assert result is expected_user
@@ -46,13 +46,13 @@ def test_register_user_hashes_password_and_commits(monkeypatch) -> None:
     monkeypatch.setattr(
         auth_service,
         "hash_password",
-        password_hasher,
+        password_hasher
     )
 
     registration = make_registration()
     user = auth_service.register_user(
         database_session,
-        registration,
+        registration
     )
 
     password_hasher.assert_called_once_with(PLAINTEXT_PASSWORD)
@@ -72,14 +72,14 @@ def test_register_user_rejects_existing_username(monkeypatch) -> None:
     database_session = Mock(spec=Session)
     database_session.scalar.return_value = User(
         username="alice",
-        password_hash=PASSWORD_HASH,
+        password_hash=PASSWORD_HASH
     )
 
     password_hasher = Mock(return_value=PASSWORD_HASH)
     monkeypatch.setattr(
         auth_service,
         "hash_password",
-        password_hasher,
+        password_hasher
     )
 
     with pytest.raises(
@@ -88,7 +88,7 @@ def test_register_user_rejects_existing_username(monkeypatch) -> None:
     ):
         auth_service.register_user(
             database_session,
-            make_registration(),
+            make_registration()
         )
 
     password_hasher.assert_not_called()
@@ -102,19 +102,19 @@ def test_register_user_rolls_back_database_uniqueness_conflict(monkeypatch) -> N
     database_session.commit.side_effect = IntegrityError(
         statement="INSERT INTO users",
         params={},
-        orig=Exception("duplicate username"),
+        orig=Exception("duplicate username")
     )
 
     monkeypatch.setattr(
         auth_service,
         "hash_password",
-        Mock(return_value=PASSWORD_HASH),
+        Mock(return_value=PASSWORD_HASH)
     )
 
     with pytest.raises(UsernameAlreadyExistsError):
         auth_service.register_user(
             database_session,
-            make_registration(),
+            make_registration()
         )
 
     database_session.rollback.assert_called_once()
