@@ -1,10 +1,14 @@
 from fastapi import FastAPI
 
+from backend.app.routes.auth_routes import router as auth_router
+
 app = FastAPI(
     title="AI Security RAG Firewall",
     description="Secure RAG document-chat platform with prompt-injection defense, RBAC, retrieval filtering, and audit logging.",
     version="0.1.0",
 )
+
+app.include_router(auth_router)
 
 @app.get("/")
 def root() -> dict[str, str]:
