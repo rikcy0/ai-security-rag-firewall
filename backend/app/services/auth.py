@@ -14,7 +14,7 @@ class UsernameAlreadyExistsError(Exception):
 def get_user_by_username(database_session: Session, username: str) -> User | None:
     statement = select(User).where(
         User.username == username
-    ) # this constructs SQL: SELECT * FROM users WHERE username = 'alice';
+    ) # this constructs SQL: SELECT * FROM users WHERE username = :username_1;
     return database_session.scalar(statement)
 
 def register_user(database_session: Session, registration: UserRegistration) -> User:
@@ -29,7 +29,7 @@ def register_user(database_session: Session, registration: UserRegistration) -> 
     user = User(username=registration.username, password_hash=password_hash)
     database_session.add(user)
 
-    # Catch simultaneous requests
+    # Catch simultaneous requests in a race condition
     try:
         database_session.commit()
     except IntegrityError as exc:
