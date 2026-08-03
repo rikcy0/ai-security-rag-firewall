@@ -38,7 +38,7 @@ def decode_access_token(token: str) -> UUID:
         payload = jwt.decode(
             token,
             settings.secret_key.get_secret_value(),
-            algorithms=ALGORITHM,
+            algorithms=[ALGORITHM],
             options={"require": ["sub", "iat", "exp"]}
         )
         return UUID(payload["sub"])

@@ -5,7 +5,7 @@ import jwt
 import pytest
 
 from backend.app.config import get_settings
-from backend.app.security.tokens import (AccessTokenError, create_access_token, decode_access_token)
+from backend.app.security.tokens import AccessTokenError, create_access_token, decode_access_token
 
 
 TEST_SECRET_KEY = "test-jwt-secret-key-" * 2
