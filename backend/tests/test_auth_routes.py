@@ -10,7 +10,7 @@ from backend.app.db.database import get_db
 from backend.app.db.models import User
 from backend.app.main import app
 from backend.app.routes import auth_routes
-from backend.app.services.auth import UsernameAlreadyExistsError
+from backend.app.services.auth import InvalidCredentialsError, UsernameAlreadyExistsError
 
 
 PLAINTEXT_PASSWORD = "a-secure-password"
@@ -118,3 +118,113 @@ def test_register_rejects_invalid_request_before_service_call(client, database_s
 
     assert response.status_code == 422
     registration_service.assert_not_called()
+
+
+def test_login_returns_bearer_access_token(client, database_session, monkeypatch) -> None:
+    database_user = make_database_user()
+
+    authentication_service = Mock(
+        return_value=database_user
+    )
+    token_creator = Mock(
+        return_value="signed-access-token"
+    )
+
+    monkeypatch.setattr(
+        auth_routes,
+        "authenticate_user",
+        authentication_service
+    )
+    monkeypatch.setattr(
+        auth_routes,
+        "create_access_token",
+        token_creator
+    )
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": "  Alice  ",
+            "password": PLAINTEXT_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "access_token": "signed-access-token",
+        "token_type": "bearer"
+    }
+
+    called_session, credentials = (
+        authentication_service.call_args.args
+    )
+
+    assert called_session is database_session
+    assert credentials.username == "alice"
+    assert (credentials.password.get_secret_value() == PLAINTEXT_PASSWORD)
+
+    token_creator.assert_called_once_with(
+        database_user.id
+    )
+
+
+def test_login_returns_generic_unauthorized_response(client, database_session, monkeypatch) -> None:
+    authentication_service = Mock(
+        side_effect=InvalidCredentialsError(
+            "Internal authentication failure"
+        )
+    )
+    token_creator = Mock()
+
+    monkeypatch.setattr(
+        auth_routes,
+        "authenticate_user",
+        authentication_service
+    )
+    monkeypatch.setattr(
+        auth_routes,
+        "create_access_token",
+        token_creator
+    )
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": "alice",
+            "password": "wrong"
+        }
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Incorrect username or password"}
+    assert response.headers["www-authenticate"] == "Bearer"
+
+    token_creator.assert_not_called()
+
+
+def test_login_rejects_invalid_form_before_authentication(client, database_session, monkeypatch) -> None:
+    authentication_service = Mock()
+    token_creator = Mock()
+
+    monkeypatch.setattr(
+        auth_routes,
+        "authenticate_user",
+        authentication_service
+    )
+    monkeypatch.setattr(
+        auth_routes,
+        "create_access_token",
+        token_creator
+    )
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": "a",
+            "password": PLAINTEXT_PASSWORD
+        }
+    )
+
+    assert response.status_code == 422
+    authentication_service.assert_not_called()
+    token_creator.assert_not_called()

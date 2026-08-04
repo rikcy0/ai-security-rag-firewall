@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.app.db.database import SessionLocal
 from backend.app.db.models import User
 from backend.app.security.passwords import verify_password
+from backend.app.security.tokens import decode_access_token
 
 
 TEST_PASSWORD = "integration-test-password"
@@ -24,6 +25,13 @@ def unique_username() -> Iterator[str]:
         database_session.execute(delete(User).where(User.username == username))
         database_session.commit()
 
+def register_integration_user(client: TestClient, username: str) -> dict[str, object]:
+    response = client.post(
+        "/auth/register",
+        json={"username": username, "password": TEST_PASSWORD}
+    )
+    assert response.status_code == 201
+    return response.json()
 
 # TestClient request -> UserRegistration -> register_user -> SQLAlchemy/PostgreSQL -> UserResponse -> Test Queries
 @pytest.mark.integration
@@ -78,3 +86,89 @@ def test_postgresql_rejects_duplicate_usernames(unique_username: str) -> None:
             database_session.commit()
 
         database_session.rollback()
+
+
+@pytest.mark.integration
+def test_login_returns_valid_jwt_for_registered_user(client: TestClient, unique_username: str) -> None:
+    registration_data = register_integration_user(client, unique_username)
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": f"  {unique_username.upper()}  ",
+            "password": TEST_PASSWORD,
+        }
+    )
+
+    assert response.status_code == 200
+
+    response_data = response.json()
+
+    assert response_data["token_type"] == "bearer"
+    assert isinstance(response_data["access_token"], str)
+    assert response_data["access_token"]
+
+    token_user_id = decode_access_token(response_data["access_token"])
+
+    assert str(token_user_id) == registration_data["id"]
+
+
+@pytest.mark.integration
+def test_wrong_password_and_unknown_username_have_same_response(client: TestClient, unique_username: str) -> None:
+    register_integration_user(client, unique_username)
+
+    wrong_password_response = client.post(
+        "/auth/login",
+        data={
+            "username": unique_username,
+            "password": "incorrect-password",
+        },
+    )
+
+    unknown_username = f"unknown-{uuid4().hex}"
+
+    unknown_user_response = client.post(
+        "/auth/login",
+        data={
+            "username": unknown_username,
+            "password": "incorrect-password",
+        },
+    )
+
+    expected_response = {"detail": "Incorrect username or password"}
+
+    assert wrong_password_response.status_code == 401
+    assert unknown_user_response.status_code == 401
+    assert wrong_password_response.json() == expected_response
+    assert unknown_user_response.json() == expected_response
+    assert (wrong_password_response.headers["www-authenticate"] == "Bearer")
+    assert (unknown_user_response.headers["www-authenticate"] == "Bearer")
+
+
+@pytest.mark.integration
+def test_inactive_user_cannot_log_in(client: TestClient, unique_username: str) -> None:
+    register_integration_user(client, unique_username)
+
+    with SessionLocal() as database_session:
+        stored_user = database_session.scalar(
+            select(User).where(
+                User.username == unique_username
+            )
+        )
+
+        assert stored_user is not None
+
+        stored_user.is_active = False
+        database_session.commit()
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": unique_username,
+            "password": TEST_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Incorrect username or password"}
+    assert response.headers["www-authenticate"] == "Bearer"
