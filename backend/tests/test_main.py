@@ -30,6 +30,9 @@ def test_openapi_schema_describes_application(client: TestClient) -> None:
     assert schema["info"]["version"] == "0.1.0"
     assert "/" in schema["paths"]
     assert "/health" in schema["paths"]
+    assert "/auth/register" in schema["paths"]
+    assert "/auth/login" in schema["paths"]
+    assert "/auth/me" in schema["paths"]
 
 
 def test_swagger_documentation_is_available(client: TestClient) -> None:

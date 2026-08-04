@@ -6,8 +6,8 @@ psycopg2-binary
 python-dotenv
 pydantic
 pydantic-settings
-passlib[bcrypt]
-python-jose[cryptography]
+pwdlib[argon2]
+PyJWT
 python-multipart
 pytest
 httpx2
