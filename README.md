@@ -19,18 +19,34 @@ Unlike a normal RAG chatbot, this project includes security controls for:
 
 ## Tech Stack
 
+- Python 3.12
 - FastAPI
-- PostgreSQL
+- Pydantic
+- PostgreSQL 16
 - pgvector
 - SQLAlchemy
-- Python
-- React
-- Docker
+- Alembic
+- pwdlib with Argon2
+- PyJWT
+- Docker Compose
 - pytest
+- React frontend planned
 
-## Planned Features
+## Implemented Features
 
-- User authentication
+- FastAPI application foundation and OpenAPI documentation
+- PostgreSQL 16 development database through Docker Compose
+- pgvector extension setup
+- SQLAlchemy database sessions and models
+- Alembic schema migrations
+- PostgreSQL-backed user registration
+- Argon2id password hashing
+- JWT bearer-token login
+- Protected current-user endpoint
+- Unit, route, security, and PostgreSQL integration tests
+
+## Roadmap
+
 - Role-based access control
 - Document upload
 - Text chunking
@@ -44,17 +60,22 @@ Unlike a normal RAG chatbot, this project includes security controls for:
 
 ## Project Status
 
-The FastAPI backend foundation and PostgreSQL/pgvector database infrastructure are implemented.
+The FastAPI backend, PostgreSQL/pgvector infrastructure, and user-authentication checkpoint are implemented.
 
-Current database capabilities include:
+Current capabilities include:
 
 - PostgreSQL 16 through Docker Compose
 - pgvector 0.8.2
 - SQLAlchemy connection and session management
 - Alembic schema migrations
-- Unit and database integration tests
+- Normalized and unique usernames
+- Argon2id password hashing
+- Signed and expiring JWT access tokens
+- Bearer-token protected routes
+- Database-backed active-user validation
+- Unit and PostgreSQL integration tests
 
-Authentication and authorization are the next planned features.
+Role-based access control is the next implementation checkpoint.
 
 ## Local Development
 
@@ -72,6 +93,15 @@ Copy the example configuration:
 
 ```bash
 cp .env.example .env
+```
+
+Generate a local JWT signing secret:
+
+```bash
+openssl rand -hex 32
+
+RAG_FIREWALL_SECRET_KEY=your-generated-secret
+RAG_FIREWALL_ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
 
 The included database credentials are intended only for local development. Never commit `.env` or use the development credentials in production.
