@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 
 import pytest
+from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -243,3 +244,21 @@ def test_authenticate_user_rejects_inactive_user(monkeypatch) -> None:
         PLAINTEXT_PASSWORD,
         PASSWORD_HASH
     )
+
+
+def test_get_user_by_id_returns_matching_user() -> None:
+    database_session = Mock(spec=Session)
+    user_id = uuid4()
+
+    expected_user = User(
+        username="alice",
+        password_hash=PASSWORD_HASH,
+        is_active=True
+    )
+    expected_user.id = user_id
+    database_session.get.return_value = expected_user
+
+    result = auth_service.get_user_by_id(database_session, user_id)
+
+    assert result is expected_user
+    database_session.get.assert_called_once_with(User, user_id)

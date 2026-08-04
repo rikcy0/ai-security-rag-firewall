@@ -1,6 +1,8 @@
 from collections.abc import Iterator
 from uuid import uuid4
+from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -9,7 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from backend.app.db.database import SessionLocal
 from backend.app.db.models import User
 from backend.app.security.passwords import verify_password
-from backend.app.security.tokens import decode_access_token
+from backend.app.security.tokens import ALGORITHM, decode_access_token
+from backend.app.config import get_settings
 
 
 TEST_PASSWORD = "integration-test-password"
@@ -32,6 +35,20 @@ def register_integration_user(client: TestClient, username: str) -> dict[str, ob
     )
     assert response.status_code == 201
     return response.json()
+
+def login_integration_user(client: TestClient, username: str,) -> str:
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": username,
+            "password": TEST_PASSWORD
+        }
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert response_data["token_type"] == "bearer"
+    return response_data["access_token"]
+
 
 # TestClient request -> UserRegistration -> register_user -> SQLAlchemy/PostgreSQL -> UserResponse -> Test Queries
 @pytest.mark.integration
@@ -171,4 +188,111 @@ def test_inactive_user_cannot_log_in(client: TestClient, unique_username: str) -
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Incorrect username or password"}
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.integration
+def test_me_returns_user_for_valid_bearer_token(client: TestClient, unique_username: str) -> None:
+    registration_data = register_integration_user(client, unique_username,)
+    access_token = login_integration_user(client, unique_username)
+
+    response = client.get(
+        "/auth/me",
+        headers={
+            "Authorization": f"Bearer {access_token}"
+        }
+    )
+
+    assert response.status_code == 200
+
+    response_data = response.json()
+
+    assert response_data["id"] == registration_data["id"]
+    assert response_data["username"] == unique_username
+    assert response_data["is_active"] is True
+    assert "created_at" in response_data
+    assert set(response_data) == {
+        "id",
+        "username",
+        "is_active",
+        "created_at",
+    }
+
+
+@pytest.mark.integration
+def test_me_rejects_token_after_user_is_disabled(client: TestClient, unique_username: str) -> None:
+    register_integration_user(client, unique_username)
+    access_token = login_integration_user(client, unique_username)
+
+    # disable the user in PostgreSQL
+    with SessionLocal() as database_session:
+        stored_user = database_session.scalar(
+            select(User).where(
+                User.username == unique_username
+            )
+        )
+
+        assert stored_user is not None
+
+        stored_user.is_active = False
+        database_session.commit()
+
+    response = client.get(
+        "/auth/me",
+        headers={
+            "Authorization": f"Bearer {access_token}"
+        }
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.integration
+def test_me_rejects_token_after_user_is_deleted(client: TestClient, unique_username: str) -> None:
+    register_integration_user(client, unique_username)
+    access_token = login_integration_user(client, unique_username)
+
+    with SessionLocal() as database_session:
+        database_session.execute(
+            delete(User).where(
+                User.username == unique_username
+            )
+        )
+        database_session.commit()
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.integration
+def test_me_rejects_expired_token_for_existing_user(client: TestClient, unique_username: str) -> None:
+    registration_data = register_integration_user(client, unique_username,)
+    settings = get_settings()
+    current_time = datetime.now(timezone.utc)
+
+    expired_token = jwt.encode(
+        {
+            "sub": registration_data["id"],
+            "iat": current_time - timedelta(minutes=2),
+            "exp": current_time - timedelta(minutes=1)
+        },
+        settings.secret_key.get_secret_value(),
+        algorithm=ALGORITHM
+    )
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {expired_token}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
     assert response.headers["www-authenticate"] == "Bearer"

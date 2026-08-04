@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,6 +27,10 @@ def get_user_by_username(database_session: Session, username: str) -> User | Non
         User.username == username
     ) # this constructs SQL: SELECT * FROM users WHERE username = :username_1;
     return database_session.scalar(statement)
+
+
+def get_user_by_id(database_session: Session, user_id: UUID) -> User | None:
+    return database_session.get(User, user_id)
 
 
 def register_user(database_session: Session, registration: UserRegistration) -> User:

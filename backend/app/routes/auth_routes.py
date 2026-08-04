@@ -7,6 +7,9 @@ from backend.app.db.database import get_db
 from backend.app.schemas.auth import TokenResponse, UserLogin, UserRegistration, UserResponse
 from backend.app.services.auth import InvalidCredentialsError, UsernameAlreadyExistsError, authenticate_user, register_user
 from backend.app.security.tokens import create_access_token
+from backend.app.security.authentication import get_current_user
+from backend.app.db.models import User
+
 
 
 router = APIRouter(
@@ -51,3 +54,11 @@ def login(
 
     access_token = create_access_token(user.id)
     return TokenResponse(access_token=access_token)
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse
+)
+def read_current_user(current_user: Annotated[User, Depends(get_current_user)]) -> UserResponse:
+    return UserResponse.model_validate(current_user)
