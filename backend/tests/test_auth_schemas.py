@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from backend.app.db.models import UserRole
 from backend.app.schemas.auth import TokenResponse, UserLogin, UserRegistration, UserResponse
 
 
@@ -75,6 +76,7 @@ def test_user_response_excludes_password_hash() -> None:
     database_user = SimpleNamespace(
         id=uuid4(),
         username="alice",
+        role=UserRole.USER.value,
         is_active=True,
         created_at=datetime.now(timezone.utc),
         password_hash=password_hash,
@@ -86,6 +88,8 @@ def test_user_response_excludes_password_hash() -> None:
     assert "password" not in response_data
     assert "password_hash" not in response_data
     assert password_hash not in repr(response)
+    assert response.role is UserRole.USER
+    assert response.model_dump(mode="json")["role"] == "user"
 
 
 def test_token_response_defaults_to_bearer() -> None:
@@ -93,3 +97,25 @@ def test_token_response_defaults_to_bearer() -> None:
 
     assert response.access_token == "signed-jwt"
     assert response.token_type == "bearer"
+
+
+def test_registration_rejects_client_supplied_role() -> None:
+    with pytest.raises(ValidationError):
+        UserRegistration.model_validate(
+            {
+                "username": "alice",
+                "password": "a-secure-password",
+                "role": "admin",
+            }
+        )
+
+
+def test_user_response_rejects_invalid_role() -> None:
+    with pytest.raises(ValidationError):
+        UserResponse(
+            id=uuid4(),
+            username="alice",
+            role="superadmin", # rejected by UserResponse validation
+            is_active=True,
+            created_at=datetime.now(timezone.utc),
+        )

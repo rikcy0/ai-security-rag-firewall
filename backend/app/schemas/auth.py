@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from backend.app.db.models import UserRole
+
 
 USERNAME_PATTERN = r"^[a-z0-9_-]+$"
 
@@ -24,6 +26,7 @@ class UsernameInput(BaseModel):
 
 class UserRegistration(UsernameInput):
     # Enforce new-acccount password policy
+    model_config = ConfigDict(extra="forbid")
     password: SecretStr = Field(
         min_length=15,
         max_length=128
@@ -42,6 +45,7 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     username: str
+    role: UserRole
     is_active: bool
     created_at: datetime
 

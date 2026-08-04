@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.app.db.database import get_db
-from backend.app.db.models import User
+from backend.app.db.models import User, UserRole
 from backend.app.main import app
 from backend.app.routes import auth_routes
 from backend.app.services.auth import InvalidCredentialsError, UsernameAlreadyExistsError
@@ -41,6 +41,7 @@ def make_database_user() -> User:
         password_hash=PASSWORD_HASH
     )
     user.id = uuid4()
+    user.role = UserRole.USER.value
     user.is_active = True
     user.created_at = datetime(
         2026,
@@ -75,6 +76,7 @@ def test_register_returns_created_user(client: TestClient, database_session: Moc
 
     assert response_data["id"] == str(database_user.id)
     assert response_data["username"] == "alice"
+    assert response_data["role"] == "user"
     assert response_data["is_active"] is True
     assert "created_at" in response_data
     assert "password" not in response_data
@@ -249,6 +251,7 @@ def test_me_returns_authenticated_user(client: TestClient, authenticated_user: U
 
     assert response_data["id"] == str(authenticated_user.id)
     assert response_data["username"] == "alice"
+    assert response_data["role"] == "user"
     assert response_data["is_active"] is True
     assert "created_at" in response_data
     assert "password" not in response_data
