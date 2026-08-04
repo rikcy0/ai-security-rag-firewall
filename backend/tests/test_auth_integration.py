@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.db.database import SessionLocal
-from backend.app.db.models import User
+from backend.app.db.models import User, UserRole
 from backend.app.security.passwords import verify_password
 from backend.app.security.tokens import ALGORITHM, decode_access_token
 from backend.app.config import get_settings
@@ -81,6 +81,7 @@ def test_registration_persists_argon2_hash_in_postgresql(client: TestClient, uni
         assert stored_user.password_hash != TEST_PASSWORD
         assert stored_user.password_hash.startswith("$argon2id$")
         assert verify_password(TEST_PASSWORD, stored_user.password_hash)
+        assert stored_user.role == UserRole.USER.value
 
 
 @pytest.mark.integration
@@ -292,3 +293,19 @@ def test_me_rejects_expired_token_for_existing_user(client: TestClient, unique_u
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.integration
+def test_postgresql_rejects_invalid_user_role(unique_username: str) -> None:
+    with SessionLocal() as database_session:
+        invalid_user = User(
+            username=unique_username,
+            password_hash="$argon2id$test-password-hash",
+            role="superadmin"
+        )
+        database_session.add(invalid_user)
+
+        with pytest.raises(IntegrityError):
+            database_session.commit()
+
+        database_session.rollback()
