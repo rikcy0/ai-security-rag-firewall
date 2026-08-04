@@ -193,7 +193,7 @@ def test_inactive_user_cannot_log_in(client: TestClient, unique_username: str) -
 
 @pytest.mark.integration
 def test_me_returns_user_for_valid_bearer_token(client: TestClient, unique_username: str) -> None:
-    registration_data = register_integration_user(client, unique_username,)
+    registration_data = register_integration_user(client, unique_username)
     access_token = login_integration_user(client, unique_username)
 
     response = client.get(
@@ -274,7 +274,7 @@ def test_me_rejects_token_after_user_is_deleted(client: TestClient, unique_usern
 
 @pytest.mark.integration
 def test_me_rejects_expired_token_for_existing_user(client: TestClient, unique_username: str) -> None:
-    registration_data = register_integration_user(client, unique_username,)
+    registration_data = register_integration_user(client, unique_username)
     settings = get_settings()
     current_time = datetime.now(timezone.utc)
 
