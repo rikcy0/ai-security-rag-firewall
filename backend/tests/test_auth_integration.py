@@ -198,9 +198,7 @@ def test_me_returns_user_for_valid_bearer_token(client: TestClient, unique_usern
 
     response = client.get(
         "/auth/me",
-        headers={
-            "Authorization": f"Bearer {access_token}"
-        }
+        headers={"Authorization": f"Bearer {access_token}"}
     )
 
     assert response.status_code == 200
@@ -239,9 +237,7 @@ def test_me_rejects_token_after_user_is_disabled(client: TestClient, unique_user
 
     response = client.get(
         "/auth/me",
-        headers={
-            "Authorization": f"Bearer {access_token}"
-        }
+        headers={"Authorization": f"Bearer {access_token}"}
     )
 
     assert response.status_code == 401
