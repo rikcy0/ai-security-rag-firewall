@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.db.database import SessionLocal
-from backend.app.db.models import User
+from backend.app.db.models import User, UserRole
 from backend.app.security.passwords import verify_password
 from backend.app.security.tokens import ALGORITHM, decode_access_token
 from backend.app.config import get_settings
@@ -81,6 +81,8 @@ def test_registration_persists_argon2_hash_in_postgresql(client: TestClient, uni
         assert stored_user.password_hash != TEST_PASSWORD
         assert stored_user.password_hash.startswith("$argon2id$")
         assert verify_password(TEST_PASSWORD, stored_user.password_hash)
+        assert stored_user.role == UserRole.USER.value
+        assert response_data["role"] == "user"
 
 
 @pytest.mark.integration
@@ -207,11 +209,13 @@ def test_me_returns_user_for_valid_bearer_token(client: TestClient, unique_usern
 
     assert response_data["id"] == registration_data["id"]
     assert response_data["username"] == unique_username
+    assert response_data["role"] == "user"
     assert response_data["is_active"] is True
     assert "created_at" in response_data
     assert set(response_data) == {
         "id",
         "username",
+        "role",
         "is_active",
         "created_at",
     }
@@ -292,3 +296,42 @@ def test_me_rejects_expired_token_for_existing_user(client: TestClient, unique_u
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.integration
+def test_postgresql_rejects_invalid_user_role(unique_username: str) -> None:
+    with SessionLocal() as database_session:
+        invalid_user = User(
+            username=unique_username,
+            password_hash="$argon2id$test-password-hash",
+            role="superadmin"
+        )
+        database_session.add(invalid_user)
+
+        with pytest.raises(IntegrityError):
+            database_session.commit()
+
+        database_session.rollback()
+
+
+# Client should not be able to create admin role
+@pytest.mark.integration
+def test_registration_rejects_client_supplied_admin_role(client: TestClient, unique_username: str) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": unique_username,
+            "password": TEST_PASSWORD,
+            "role": "admin"
+        }
+    )
+
+    assert response.status_code == 422
+
+    with SessionLocal() as database_session: 
+        stored_user = database_session.scalar(
+            select(User).where(
+                User.username == unique_username
+            )
+        )
+        assert stored_user is None

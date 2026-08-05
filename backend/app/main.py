@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
 from backend.app.routes.auth_routes import router as auth_router
+from backend.app.routes.admin_routes import router as admin_router
+
 
 app = FastAPI(
     title="AI Security RAG Firewall",
@@ -8,7 +10,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
 app.include_router(auth_router)
+app.include_router(admin_router)
+
 
 @app.get("/")
 def root() -> dict[str, str]:
@@ -16,6 +21,7 @@ def root() -> dict[str, str]:
         "message": "AI Security RAG Firewall API is running",
         "status": "ok",
     }
+
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
