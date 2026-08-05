@@ -43,11 +43,16 @@ Unlike a normal RAG chatbot, this project includes security controls for:
 - Argon2id password hashing
 - JWT bearer-token login
 - Protected current-user endpoint
+- Database-backed `user` and `admin` roles
+- Database constraints that reject unsupported roles
+- Default `user` role for newly registered accounts
+- Registration protection against client-supplied roles
+- Reusable FastAPI role-authorization dependencies
+- Admin-only user-list endpoint
 - Unit, route, security, and PostgreSQL integration tests
 
 ## Roadmap
 
-- Role-based access control
 - Document upload
 - Text chunking
 - Embedding generation
@@ -60,7 +65,7 @@ Unlike a normal RAG chatbot, this project includes security controls for:
 
 ## Project Status
 
-The FastAPI backend, PostgreSQL/pgvector infrastructure, and user-authentication checkpoint are implemented.
+The FastAPI backend, PostgreSQL/pgvector infrastructure, user authentication, and role-based access control checkpoints are implemented.
 
 Current capabilities include:
 
@@ -73,9 +78,13 @@ Current capabilities include:
 - Signed and expiring JWT access tokens
 - Bearer-token protected routes
 - Database-backed active-user validation
+- Database-backed `user` and `admin` roles
+- Reusable role-authorization dependencies
+- Admin-only API routes
+- Immediate enforcement of role changes on subsequent requests
 - Unit and PostgreSQL integration tests
 
-Role-based access control is the next implementation checkpoint.
+Document upload and text chunking are the next implementation checkpoint.
 
 ## Local Development
 
@@ -162,6 +171,26 @@ Open:
 - API: http://127.0.0.1:8000
 - Health check: http://127.0.0.1:8000/health
 - API documentation: http://127.0.0.1:8000/docs
+
+### Authentication and authorization endpoints
+
+| Method | Endpoint | Purpose | Required access |
+| --- | --- | --- | --- |
+| `POST` | `/auth/register` | Register a new user | Public |
+| `POST` | `/auth/login` | Authenticate and receive an access token | Public |
+| `GET` | `/auth/me` | Return the current authenticated user | Authenticated user |
+| `GET` | `/admin/users` | Return a safe list of registered users | Administrator |
+
+New accounts always receive the `user` role. Registration requests cannot assign the `admin` role.
+
+For local development, an existing user can be promoted through PostgreSQL:
+
+```bash
+docker compose exec db psql \
+  -U postgres \
+  -d rag_firewall \
+  -c "UPDATE users SET role = 'admin' WHERE username = 'your_username';"
+```
 
 ### Run tests
 
