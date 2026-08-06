@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal   #limits a value to a specific set of allowed strings
 
 # pydantic: settings class that controls behavior and hides values
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +31,22 @@ class Settings(BaseSettings):
     secret_key: SecretStr = Field(min_length=32)
     access_token_expire_minutes: int = Field(default=60, ge=1, le=1440)
 
+    max_upload_size_bytes: int = Field(
+        default=1_048_576,
+        ge=1,
+        le=10_485_760
+    )
+    chunk_size_characters: int = Field(
+        default=1_000,
+        ge=100,
+        le=10_000
+    )
+    chunk_overlap_characters: int = Field(
+        default=200,
+        ge=0,
+        le=2_000
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="RAG_FIREWALL_",
         env_file=PROJECT_ROOT / ".env",
@@ -38,6 +54,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore", #config will not fail upon unknown values in .env
     )
+
+    @model_validator(mode="after")
+    def validate_chunk_configuration(self) -> "Settings":
+        if self.chunk_overlap_characters >= self.chunk_size_characters:
+            raise ValueError("Chunk overlap must be smaller than chunk size")
+        return self
 
 @lru_cache
 def get_settings() -> Settings:
