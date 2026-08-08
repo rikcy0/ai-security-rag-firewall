@@ -24,22 +24,24 @@ router = APIRouter(
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED
 )
-async def upload_document(
+def upload_document(
     file: Annotated[UploadFile, File()],
     current_user: Annotated[User, Depends(get_current_user)],
     database_session: Annotated[Session, Depends(get_db)]) -> DocumentResponse:
 
     settings = get_settings()
-    try:
-        content_bytes = await file.read(settings.max_upload_size_bytes + 1)
+
+    filename = file.filename
+    try: # 1 extra byte to account for oversized document case
+        content_bytes = file.file.read(settings.max_upload_size_bytes + 1)
     finally:
-        await file.close()
+        file.file.close()
 
     try:
         document = create_document(
             database_session,
             current_user.id,
-            file.filename,
+            filename,
             content_bytes,
             max_upload_size_bytes=settings.max_upload_size_bytes,
             chunk_size=settings.chunk_size_characters,
