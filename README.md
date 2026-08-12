@@ -1,12 +1,12 @@
 # AI Security RAG Firewall
 
-A secure RAG document-chat platform with prompt-injection defense, role-based access control, retrieval filtering, and audit logging.
+A security-focused RAG backend under active development, with authenticated document ingestion, role-based access control, and planned prompt-injection defenses.
 
 ## Overview
 
-AI Security RAG Firewall is a full-stack AI security project that allows users to upload documents, ask questions over those documents, and receive answers through a retrieval-augmented generation pipeline.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, and owner-isolated ingestion of UTF-8 text and Markdown documents. Planned stages will add embeddings, vector retrieval, question answering, and prompt-injection defenses.
 
-Unlike a normal RAG chatbot, this project includes security controls for:
+Unlike a normal RAG chatbot, this project is designed to include security controls for:
 
 - Prompt injection detection
 - System prompt leakage attempts
@@ -50,22 +50,31 @@ Unlike a normal RAG chatbot, this project includes security controls for:
 - Reusable FastAPI role-authorization dependencies
 - Admin-only user-list endpoint
 - Unit, route, security, and PostgreSQL integration tests
+- Authenticated `.txt` and `.md` document uploads
+- Configurable upload-size and chunking limits
+- Bounded file reads and UTF-8 content validation
+- Safe filename normalization and extension validation
+- Deterministic overlapping text chunking
+- PostgreSQL-backed document and chunk persistence
+- Database-enforced document ownership relationships
+- Owner-scoped document listing and metadata retrieval
+- Cross-user document access prevention
+- Atomic document and chunk creation with rollback on database failure
 
 ## Roadmap
 
-- Document upload
-- Text chunking
-- Embedding generation
-- Vector search
+- Embedding generation for stored document chunks
+- Vector similarity search
 - RAG answer generation
 - Prompt-injection firewall
 - Security event logs
 - Admin dashboard
 - Adversarial test suite
+- More advanced token-aware and structure-aware chunking
 
 ## Project Status
 
-The FastAPI backend, PostgreSQL/pgvector infrastructure, user authentication, and role-based access control checkpoints are implemented.
+The FastAPI backend, PostgreSQL/pgvector infrastructure, user authentication, role-based access control, and secure document-ingestion checkpoints are implemented.
 
 Current capabilities include:
 
@@ -83,8 +92,16 @@ Current capabilities include:
 - Admin-only API routes
 - Immediate enforcement of role changes on subsequent requests
 - Unit and PostgreSQL integration tests
+- Authenticated text and Markdown document uploads
+- Configurable upload-size enforcement
+- UTF-8 document validation
+- Deterministic overlapping text chunking
+- PostgreSQL-backed documents and chunks
+- Owner-scoped document listing and metadata retrieval
+- Cross-user document access prevention
+- Database constraints and cascading document cleanup
 
-Document upload and text chunking are the next implementation checkpoint.
+Document upload and text chunking are implemented. Embedding generation, vector retrieval, and AI-specific prompt-injection defenses remain under development.
 
 ## Local Development
 
@@ -191,6 +208,20 @@ docker compose exec db psql \
   -d rag_firewall \
   -c "UPDATE users SET role = 'admin' WHERE username = 'your_username';"
 ```
+
+### Document endpoints
+
+| Method | Endpoint | Purpose | Required access |
+| --- | --- | --- | --- |
+| `POST` | `/documents` | Upload and chunk a UTF-8 `.txt` or `.md` document | Authenticated user |
+| `GET` | `/documents` | List metadata for the current user's documents | Authenticated user |
+| `GET` | `/documents/{document_id}` | Return metadata for an owned document | Document owner |
+
+Uploaded documents are associated with the authenticated user. The client cannot select a different owner.
+
+Document responses contain approved metadata only. Original document content, chunks, and internal ownership identifiers are not returned by these endpoints.
+
+Requests for nonexistent documents and documents owned by another user both return `404 Not Found`.
 
 ### Run tests
 

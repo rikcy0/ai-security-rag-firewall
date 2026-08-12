@@ -6,7 +6,7 @@ from backend.app.routes.document_routes import router as document_router
 
 app = FastAPI(
     title="AI Security RAG Firewall",
-    description="Secure RAG document-chat platform with prompt-injection defense, RBAC, retrieval filtering, and audit logging.",
+    description="Security-focused RAG backend with authentication, RBAC, and owner-scoped document ingestion.",
     version="0.1.0",
 )
 
