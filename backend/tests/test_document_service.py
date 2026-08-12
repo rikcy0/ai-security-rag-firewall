@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import Document
 from backend.app.services.documents import (
-    DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError, create_document)
+    DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError,
+    create_document, get_document_for_owner, list_documents_for_owner)
 
 
 OWNER_ID = uuid4()
@@ -211,4 +212,86 @@ def test_database_failure_rolls_back_transaction(database_session: Mock) -> None
         )
 
     database_session.rollback.assert_called_once()
-    
+
+
+def test_list_documents_for_owner_returns_database_results(database_session: Mock) -> None:
+    expected_documents = [
+        Document(
+            owner_id=OWNER_ID,
+            filename="newer.txt",
+            content_type="text/plain",
+            size_bytes=10,
+            content="newer text"
+        ),
+        Document(
+            owner_id=OWNER_ID,
+            filename="older.md",
+            content_type="text/markdown",
+            size_bytes=10,
+            content="older text"
+        )
+    ]
+
+    scalar_result = Mock()
+    scalar_result.all.return_value = expected_documents
+    database_session.scalars.return_value = scalar_result
+
+    result = list_documents_for_owner(
+        database_session,
+        OWNER_ID
+    )
+
+    assert result == expected_documents
+    database_session.scalars.assert_called_once()
+    scalar_result.all.assert_called_once()
+
+    statement = database_session.scalars.call_args.args[0]
+    compiled_statement = statement.compile()
+
+    assert "documents.owner_id" in str(compiled_statement)
+    assert OWNER_ID in (compiled_statement.params.values())
+
+
+def test_get_document_for_owner_uses_id_and_owner(database_session: Mock) -> None:
+    document_id = uuid4()
+
+    expected_document = Document(
+        owner_id=OWNER_ID,
+        filename="security.txt",
+        content_type="text/plain",
+        size_bytes=13,
+        content="security text"
+    )
+    expected_document.id = document_id
+
+    database_session.scalar.return_value = expected_document
+
+    result = get_document_for_owner(
+        database_session,
+        OWNER_ID,
+        document_id
+    )
+
+    assert result is expected_document
+    database_session.scalar.assert_called_once()
+
+    statement = database_session.scalar.call_args.args[0]
+    compiled_statement = statement.compile()
+    compiled_sql = str(compiled_statement)
+
+    assert "documents.id" in compiled_sql
+    assert "documents.owner_id" in compiled_sql
+    assert document_id in (compiled_statement.params.values())
+    assert OWNER_ID in (compiled_statement.params.values())
+
+
+def test_get_document_for_owner_returns_none_without_match(database_session: Mock) -> None:
+    database_session.scalar.return_value = None
+
+    result = get_document_for_owner(
+        database_session,
+        OWNER_ID,
+        uuid4(),
+    )
+
+    assert result is None

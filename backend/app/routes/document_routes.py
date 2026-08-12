@@ -1,5 +1,6 @@
 from typing import Annotated
 
+from uuid import UUID
 from fastapi import (
     APIRouter, Depends, File, HTTPException, UploadFile, status)
 from sqlalchemy.orm import Session
@@ -10,7 +11,8 @@ from backend.app.db.models import User
 from backend.app.schemas.documents import DocumentResponse
 from backend.app.security.authentication import get_current_user
 from backend.app.services.documents import (
-    DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError, create_document)
+    DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError,
+    create_document, get_document_for_owner, list_documents_for_owner)
 
 
 router = APIRouter(
@@ -64,4 +66,35 @@ def upload_document(
         ) from exc
 
     return DocumentResponse.model_validate(document)
-    
+
+
+@router.get(
+    "",
+    response_model=list[DocumentResponse]
+)
+def read_documents(
+    current_user: Annotated[User, Depends(get_current_user)],
+    database_session: Annotated[Session, Depends(get_db)]) -> list[DocumentResponse]:
+
+    documents = list_documents_for_owner(database_session, current_user.id)
+    return [DocumentResponse.model_validate(document) for document in documents]
+
+
+@router.get(
+    "/{document_id}",
+    response_model=DocumentResponse
+)
+def read_document(
+    document_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    database_session: Annotated[Session, Depends(get_db)]) -> DocumentResponse:
+
+    document = get_document_for_owner(database_session, current_user.id, document_id)
+
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+
+    return DocumentResponse.model_validate(document)

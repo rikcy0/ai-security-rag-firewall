@@ -1,8 +1,9 @@
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from backend.app.db.models import Document, DocumentChunk
 from backend.app.rag.chunker import chunk_text
@@ -122,3 +123,50 @@ def create_document(
 
     return document
     
+
+def list_documents_for_owner(database_session: Session, owner_id: UUID) -> list[Document]:
+    statement = (
+        select(Document)
+        .options(
+            load_only(
+                Document.id,
+                Document.filename,
+                Document.content_type,
+                Document.size_bytes,
+                Document.created_at
+            )
+        )
+        .where(Document.owner_id == owner_id
+        )
+        .order_by(
+            Document.created_at.desc(),
+            Document.id.desc()
+        )
+    )
+
+    return list(database_session.scalars(statement).all())
+
+
+# Will return none if: doc does not exist or does but belongs to another user
+def get_document_for_owner(
+        database_session: Session,
+        owner_id: UUID,
+        document_id: UUID) -> Document | None:
+    statement = (
+        select(Document)
+        .options(
+            load_only(
+                Document.id,
+                Document.filename,
+                Document.content_type,
+                Document.size_bytes,
+                Document.created_at
+            )
+        )
+        .where(
+            Document.id == document_id,
+            Document.owner_id == owner_id
+        )
+    )
+
+    return database_session.scalar(statement)

@@ -263,3 +263,159 @@ def test_upload_requires_authentication(
     assert response.json() == {"detail": "Could not validate credentials"}
     assert response.headers["www-authenticate"] == "Bearer"
     document_creator.assert_not_called()
+
+
+def test_authenticated_user_can_list_owned_documents(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    monkeypatch) -> None:
+    first_document = make_document(authenticated_user.id)
+    first_document.filename = "first.txt"
+
+    second_document = make_document(authenticated_user.id)
+    second_document.filename = "second.txt"
+
+    document_listing = Mock(
+        return_value=[
+            first_document,
+            second_document
+        ]
+    )
+
+    monkeypatch.setattr(
+        document_routes,
+        "list_documents_for_owner",
+        document_listing
+    )
+
+    response = client.get("/documents")
+
+    assert response.status_code == 200
+
+    response_data = response.json()
+
+    assert [document["filename"] for document in response_data] == [
+        "first.txt",
+        "second.txt",
+    ]
+
+    for document_data in response_data:
+        assert set(document_data) == {
+            "id",
+            "filename",
+            "content_type",
+            "size_bytes",
+            "created_at",
+        }
+        assert "owner_id" not in document_data
+        assert "content" not in document_data
+
+    document_listing.assert_called_once_with(database_session, authenticated_user.id)
+
+
+def test_authenticated_user_can_retrieve_owned_document(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    monkeypatch) -> None:
+    stored_document = make_document(authenticated_user.id)
+
+    document_lookup = Mock(return_value=stored_document)
+
+    monkeypatch.setattr(
+        document_routes,
+        "get_document_for_owner",
+        document_lookup
+    )
+
+    response = client.get(f"/documents/{stored_document.id}")
+
+    assert response.status_code == 200
+
+    response_data = response.json()
+
+    assert response_data["id"] == str(stored_document.id)
+    assert response_data["filename"] == stored_document.filename
+    assert "owner_id" not in response_data
+    assert "content" not in response_data
+
+    document_lookup.assert_called_once_with(
+        database_session,
+        authenticated_user.id,
+        stored_document.id
+    )
+
+
+# The route should not distinguish "missing" or "unowned"
+# Do not want to confirm that a document belongs to another user
+def test_missing_or_unowned_document_returns_not_found(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    monkeypatch) -> None:
+    document_lookup = Mock(return_value=None)
+
+    monkeypatch.setattr(
+        document_routes,
+        "get_document_for_owner",
+        document_lookup,
+    )
+
+    document_id = uuid4()
+
+    response = client.get(f"/documents/{document_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found"}
+
+    document_lookup.assert_called_once_with(
+        database_session,
+        authenticated_user.id,
+        document_id,
+    )
+
+
+def test_document_listing_requires_authentication(
+    client: TestClient,
+    database_session: Mock,
+    document_settings: SimpleNamespace,
+    monkeypatch) -> None:
+    document_listing = Mock()
+
+    monkeypatch.setattr(
+        document_routes,
+        "list_documents_for_owner",
+        document_listing,
+    )
+
+    response = client.get("/documents")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+    assert response.headers["www-authenticate"] == "Bearer"
+    
+    document_listing.assert_not_called()
+
+
+def test_document_retrieval_rejects_non_uuid_id(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    monkeypatch) -> None:
+    document_lookup = Mock()
+
+    monkeypatch.setattr(
+        document_routes,
+        "get_document_for_owner",
+        document_lookup,
+    )
+
+    response = client.get("/documents/not-a-valid-uuid")
+
+    assert response.status_code == 422
+    document_lookup.assert_not_called()
