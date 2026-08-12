@@ -1,6 +1,6 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
-from backend.app.db.models import User, UserRole
+from backend.app.db.models import Document, DocumentChunk, User, UserRole
 
 
 def test_user_model_has_only_expected_columns() -> None:
@@ -64,3 +64,91 @@ def test_database_constrains_user_roles() -> None:
 
     assert "'user'" in constraint_sql
     assert "'admin'" in constraint_sql
+
+
+def test_document_model_has_expected_columns() -> None:
+    column_names = set(Document.__table__.columns.keys())
+
+    assert column_names == {
+        "id",
+        "owner_id",
+        "filename",
+        "content_type",
+        "size_bytes",
+        "content",
+        "created_at",
+    }
+
+
+def test_document_owner_is_required_indexed_and_cascades() -> None:
+    owner_column = Document.__table__.columns["owner_id"]
+
+    assert owner_column.nullable is False
+    assert owner_column.index is True
+
+    foreign_keys = list(owner_column.foreign_keys)
+
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0].target_fullname == "users.id"
+    assert foreign_keys[0].ondelete == "CASCADE"
+
+
+def test_document_has_content_and_size_constraints() -> None:
+    constraint_names = {
+        constraint.name
+        for constraint in Document.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert "ck_documents_size_bytes_positive" in constraint_names
+    assert "ck_documents_content_not_empty" in constraint_names
+
+
+def test_document_chunk_model_has_expected_columns() -> None:
+    column_names = set(DocumentChunk.__table__.columns.keys())
+
+    assert column_names == {
+        "id",
+        "document_id",
+        "chunk_index",
+        "content",
+    }
+
+
+def test_document_chunks_have_parent_and_ordering_constraints() -> None:
+    document_id_column = DocumentChunk.__table__.columns[
+        "document_id"
+    ]
+
+    assert document_id_column.nullable is False
+    assert document_id_column.index is True
+
+    foreign_keys = list(document_id_column.foreign_keys)
+
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0].target_fullname == "documents.id"
+    assert foreign_keys[0].ondelete == "CASCADE"
+
+    unique_constraints = [
+        constraint
+        for constraint in DocumentChunk.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+
+    assert any(
+        (
+            constraint.name == "uq_document_chunks_document_id_chunk_index"
+            and 
+            tuple(constraint.columns.keys()) == ("document_id", "chunk_index")
+        )
+        for constraint in unique_constraints
+    )
+
+    check_constraint_names = {
+        constraint.name
+        for constraint in DocumentChunk.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert ("ck_document_chunks_chunk_index_nonnegative" in check_constraint_names)
+    assert ("ck_document_chunks_content_not_empty" in check_constraint_names)

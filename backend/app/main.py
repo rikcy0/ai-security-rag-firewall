@@ -2,17 +2,18 @@ from fastapi import FastAPI
 
 from backend.app.routes.auth_routes import router as auth_router
 from backend.app.routes.admin_routes import router as admin_router
-
+from backend.app.routes.document_routes import router as document_router
 
 app = FastAPI(
     title="AI Security RAG Firewall",
-    description="Secure RAG document-chat platform with prompt-injection defense, RBAC, retrieval filtering, and audit logging.",
+    description="Security-focused RAG backend with authentication, RBAC, and owner-scoped document ingestion.",
     version="0.1.0",
 )
 
 
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(document_router)
 
 
 @app.get("/")
