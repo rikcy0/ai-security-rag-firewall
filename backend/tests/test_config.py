@@ -162,3 +162,33 @@ def test_chunk_overlap_must_be_smaller_than_chunk_size(monkeypatch) -> None:
 
     with pytest.raises(ValidationError, match="Chunk overlap must be smaller than chunk size"):
         Settings(_env_file=None)
+
+
+# Prompt-injection detector configuration
+
+def test_prompt_injection_block_threshold_defaults_to_50(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    settings = Settings(_env_file=None)
+
+    assert settings.prompt_injection_block_threshold == 50
+
+
+@pytest.mark.parametrize(
+    "invalid_threshold",
+    ["0", "101"],
+)
+def test_prompt_injection_block_threshold_must_be_between_1_and_100(monkeypatch, invalid_threshold: str) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_PROMPT_INJECTION_BLOCK_THRESHOLD",
+        invalid_threshold
+    )
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
