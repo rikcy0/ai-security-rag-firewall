@@ -47,6 +47,7 @@ def test_service_persists_document_and_ordered_chunks(service_owner_id: UUID) ->
             max_upload_size_bytes=100,
             chunk_size=4,
             chunk_overlap=1,
+            prompt_injection_block_threshold=50,
         )
         document_id = document.id
 
@@ -97,6 +98,7 @@ def test_service_rolls_back_document_when_chunk_insert_fails(service_owner_id: U
                 max_upload_size_bytes=100,
                 chunk_size=100,
                 chunk_overlap=20,
+                prompt_injection_block_threshold=50,
             )
 
     with SessionLocal() as database_session:

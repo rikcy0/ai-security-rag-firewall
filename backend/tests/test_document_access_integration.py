@@ -47,7 +47,8 @@ def document_access_settings(monkeypatch) -> SimpleNamespace:
     settings = SimpleNamespace(
         max_upload_size_bytes=100,
         chunk_size_characters=4,
-        chunk_overlap_characters=1
+        chunk_overlap_characters=1,
+        prompt_injection_block_threshold=50,
     )
 
     monkeypatch.setattr(

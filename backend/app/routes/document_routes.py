@@ -11,8 +11,8 @@ from backend.app.db.models import User
 from backend.app.schemas.documents import DocumentResponse
 from backend.app.security.authentication import get_current_user
 from backend.app.services.documents import (
-    DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError,
-    create_document, get_document_for_owner, list_documents_for_owner)
+    DocumentTooLargeError, InvalidDocumentError, PromptInjectionDetectedError,
+    UnsupportedDocumentTypeError, create_document, get_document_for_owner, list_documents_for_owner)
 
 
 router = APIRouter(
@@ -47,8 +47,14 @@ def upload_document(
             content_bytes,
             max_upload_size_bytes=settings.max_upload_size_bytes,
             chunk_size=settings.chunk_size_characters,
-            chunk_overlap=settings.chunk_overlap_characters
+            chunk_overlap=settings.chunk_overlap_characters,
+            prompt_injection_block_threshold=settings.prompt_injection_block_threshold
         )
+    except PromptInjectionDetectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc)
+        ) from exc
     except DocumentTooLargeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,   
