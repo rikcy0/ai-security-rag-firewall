@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session, load_only
 
 from backend.app.db.models import Document, DocumentChunk
 from backend.app.rag.chunker import chunk_text
+from backend.app.security.prompt_injection import (
+    PromptInjectionDecision, PromptInjectionResult, analyze_prompt_injection
+)
 
 ALLOWED_DOCUMENT_EXTENSIONS = {
     ".txt": "text/plain",
@@ -28,6 +31,14 @@ class UnsupportedDocumentTypeError(DocumentUploadError):
 
 class DocumentTooLargeError(DocumentUploadError):
     """Raised when document bytes exceed the configured limit."""
+
+
+class PromptInjectionDetectedError(DocumentUploadError):
+    """Raised when document content violates prompt-injection policy."""
+
+    def __init__(self, result: PromptInjectionResult) -> None:
+        self.result = result
+        super().__init__("Document rejected by prompt-injection policy")
 
 
 def normalize_document_filename(filename:str | None) -> tuple[str, str]:
@@ -81,11 +92,18 @@ def create_document(
     *, # the int parameters after must be passed by name
     max_upload_size_bytes: int,
     chunk_size: int,
-    chunk_overlap: int
+    chunk_overlap: int,
+    prompt_injection_block_threshold: int
 ) -> Document:
 
     safe_filename, content_type = normalize_document_filename(filename)
+
     content = decode_document_content(content_bytes, max_upload_size_bytes)
+
+    injection_result = analyze_prompt_injection(content, block_threshold=prompt_injection_block_threshold)
+    if injection_result.decision is PromptInjectionDecision.BLOCK:
+        raise PromptInjectionDetectedError(injection_result)
+
     chunks = chunk_text(content, chunk_size=chunk_size, overlap=chunk_overlap)
 
     if not chunks: 

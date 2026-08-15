@@ -47,6 +47,12 @@ class Settings(BaseSettings):
         le=2_000
     )
 
+    prompt_injection_block_threshold: int = Field(
+        default=50,
+        ge=1,
+        le=100
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="RAG_FIREWALL_",
         env_file=PROJECT_ROOT / ".env",
