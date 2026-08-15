@@ -242,6 +242,7 @@ Uploaded document text is screened for prompt-injection signals after UTF-8 vali
 {
   "detail": "Document rejected by prompt-injection policy"
 }
+```
 
 ### Run tests
 
