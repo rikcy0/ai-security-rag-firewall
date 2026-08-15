@@ -1,6 +1,6 @@
 # AI Security RAG Firewall
 
-A security-focused RAG backend under active development, with authenticated document ingestion, role-based access control, and planned prompt-injection defenses.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, and deterministic prompt-injection screening for uploaded UTF-8 text and Markdown documents. Planned stages will add embeddings, vector retrieval, question answering, query-time defenses, and security-event auditing.
 
 ## Overview
 
@@ -60,13 +60,21 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Owner-scoped document listing and metadata retrieval
 - Cross-user document access prevention
 - Atomic document and chunk creation with rollback on database failure
+- Deterministic rule-based prompt-injection detection
+- Configurable prompt-injection blocking threshold
+- Detection of instruction overrides, system-prompt extraction, role manipulation, security bypasses, and data-exfiltration requests
+- Unicode compatibility, case, whitespace, and zero-width-character normalization for security analysis
+- Prompt-injection scanning before document chunking or persistence
+- Generic rejection responses that do not expose detector scores or matched rules
+- PostgreSQL integration tests proving blocked documents and chunks are not persisted
 
 ## Roadmap
 
 - Embedding generation for stored document chunks
 - Vector similarity search
 - RAG answer generation
-- Prompt-injection firewall
+- Query-time prompt-injection enforcement
+- Contextual and model-assisted prompt-injection defenses
 - Security event logs
 - Admin dashboard
 - Adversarial test suite
@@ -100,8 +108,13 @@ Current capabilities include:
 - Owner-scoped document listing and metadata retrieval
 - Cross-user document access prevention
 - Database constraints and cascading document cleanup
+- Rule-based prompt-injection risk scoring
+- Validated and configurable blocking threshold
+- Pre-persistence scanning of uploaded document content
+- Generic `422 Unprocessable Content` responses for blocked documents
+- Database-backed verification that blocked content is not persisted
 
-Document upload and text chunking are implemented. Embedding generation, vector retrieval, and AI-specific prompt-injection defenses remain under development.
+Document upload, text chunking, and deterministic ingestion-time prompt-injection screening are implemented. Embedding generation, vector retrieval, query-time prompt-injection enforcement, contextual detection, and model-assisted defenses remain under development.
 
 ## Local Development
 
@@ -222,6 +235,13 @@ Uploaded documents are associated with the authenticated user. The client cannot
 Document responses contain approved metadata only. Original document content, chunks, and internal ownership identifiers are not returned by these endpoints.
 
 Requests for nonexistent documents and documents owned by another user both return `404 Not Found`.
+
+Uploaded document text is screened for prompt-injection signals after UTF-8 validation and before chunking or database persistence. Documents that meet the configured blocking threshold receive:
+
+```json
+{
+  "detail": "Document rejected by prompt-injection policy"
+}
 
 ### Run tests
 

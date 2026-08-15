@@ -21,7 +21,8 @@ Primary risks addressed:
 - Document ownership is enforced before stored content can be accessed.
 - The planned retrieval pipeline will apply user authorization before content is sent to an LLM.
 - Planned security-event logging will support monitoring and auditing.
-- Planned prompt-injection detection will score or block suspicious inputs before retrieval.
+- Uploaded document text is screened for prompt-injection signals before chunking and persistence.
+- Future query and retrieval paths will apply the same security boundary before invoking AI providers.
 - Sensitive configuration values are stored in environment variables, not source code.
 
 ## Implemented Authentication Controls
@@ -113,6 +114,38 @@ Primary risks addressed:
 - Cascading deletion prevents orphaned documents and chunks.
 - Database constraints reject empty content, invalid chunk indexes, and duplicate chunk positions.
 
+## Implemented Prompt-Injection Controls
+
+### Detection
+
+- Uploaded document text is analyzed after size, UTF-8, null-character, and readable-content validation.
+- Detection occurs before text chunking and before any document or chunk is added to the database session.
+- The detector is independent of FastAPI, SQLAlchemy, and external AI providers.
+- Detection rules are precompiled and use bounded matching expressions.
+- Current categories include instruction override, system-prompt extraction, role manipulation, security bypass, and data exfiltration.
+- Each matched category contributes a project-defined severity weight.
+- Combined risk scores are capped at `100`.
+- Risk scores are deterministic policy values and must not be interpreted as probabilities.
+- The blocking threshold is validated between `1` and `100` and defaults to `50`.
+
+### Normalization
+
+- Detection uses Unicode NFKC compatibility normalization.
+- Analysis is case-insensitive through Unicode case folding.
+- Repeated whitespace, tabs, and line breaks are normalized.
+- Invisible Unicode format characters are analyzed using two representations.
+- One representation removes format characters to reconstruct split words.
+- The other treats format characters as boundaries to avoid joining adjacent words.
+- Normalization is applied only to the security-analysis copy; stored document content is not rewritten by the detector.
+
+### Enforcement
+
+- Content meeting the configured threshold is rejected before chunking and persistence.
+- Rejected uploads receive `422 Unprocessable Content`.
+- Public responses do not reveal scores, categories, reasons, or matching content.
+- Internal detector results remain available for future security-event logging.
+- PostgreSQL integration tests verify that rejected uploads create neither document nor chunk rows.
+
 ## Current Limitations
 
 This is a local portfolio project and not a production identity platform.
@@ -148,7 +181,19 @@ The current document-security implementation is intentionally limited:
 - Document-access decisions are not yet recorded in an audit log.
 - Stored document content should not be treated as encrypted application data.
 
-Audit logging, vector retrieval controls, and AI-specific prompt-injection defenses remain under development.
+The current prompt-injection detector is intentionally limited:
+
+- Detection is based on lexical rules and does not understand semantic intent.
+- Negated defensive statements may match the same rules as malicious instructions.
+- Quoted attack examples in cybersecurity material may produce false positives.
+- The current detector may miss encoded instructions, creative misspellings, typoglycemia, homoglyph substitution, fragmented instructions, and semantic paraphrases.
+- Current rule weights have not been statistically calibrated against a large adversarial and benign corpus.
+- At the default threshold, every current rule is individually strong enough to block.
+- The detector currently protects document ingestion but is not yet connected to a user-query or retrieval pipeline.
+- Model-assisted classification, output screening, rate limiting, quarantine workflows, and human review are not implemented.
+- Prompt-injection detection is one defense layer and is not a guarantee that all attacks will be identified.
+
+Audit logging, vector retrieval controls, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
 
 ## Responsible Disclosure
 
