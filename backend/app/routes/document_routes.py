@@ -1,5 +1,8 @@
 from typing import Annotated
 
+from collections.abc import Iterator
+
+from openai import OpenAI
 from uuid import UUID
 from fastapi import (
     APIRouter, Depends, File, HTTPException, UploadFile, status)
@@ -13,6 +16,30 @@ from backend.app.security.authentication import get_current_user
 from backend.app.services.documents import (
     DocumentTooLargeError, InvalidDocumentError, PromptInjectionDetectedError,
     UnsupportedDocumentTypeError, create_document, get_document_for_owner, list_documents_for_owner)
+from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider, OpenAIEmbeddingProvider
+
+
+EMBEDDING_SERVICE_UNAVAILABLE_DETAIL = "Document embedding service is unavailable"
+
+
+def get_embedding_provider() -> Iterator[EmbeddingProvider]:
+    settings = get_settings()
+
+    if settings.openai_api_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=EMBEDDING_SERVICE_UNAVAILABLE_DETAIL
+        )
+
+    client = OpenAI(api_key=settings.openai_api_key.get_secret_value())
+
+    try:
+        yield OpenAIEmbeddingProvider(
+            client=client,
+            model=settings.embedding_model
+        )
+    finally:
+        client.close()
 
 
 router = APIRouter(
@@ -29,7 +56,9 @@ router = APIRouter(
 def upload_document(
     file: Annotated[UploadFile, File()],
     current_user: Annotated[User, Depends(get_current_user)],
-    database_session: Annotated[Session, Depends(get_db)]) -> DocumentResponse:
+    database_session: Annotated[Session, Depends(get_db)],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
+    ) -> DocumentResponse:
 
     settings = get_settings()
 
@@ -48,12 +77,18 @@ def upload_document(
             max_upload_size_bytes=settings.max_upload_size_bytes,
             chunk_size=settings.chunk_size_characters,
             chunk_overlap=settings.chunk_overlap_characters,
-            prompt_injection_block_threshold=settings.prompt_injection_block_threshold
+            prompt_injection_block_threshold=settings.prompt_injection_block_threshold,
+            embedding_provider=embedding_provider
         )
     except PromptInjectionDetectedError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc)
+        ) from exc
+    except EmbeddingGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=EMBEDDING_SERVICE_UNAVAILABLE_DETAIL
         ) from exc
     except DocumentTooLargeError as exc:
         raise HTTPException(
