@@ -192,3 +192,76 @@ def test_prompt_injection_block_threshold_must_be_between_1_and_100(monkeypatch,
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+# Embedding configuration
+
+def test_openai_api_key_is_optional(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.delenv(
+        "RAG_FIREWALL_OPENAI_API_KEY",
+        raising=False
+    )
+
+    settings = Settings(_env_file=None)
+    assert settings.openai_api_key is None
+
+
+def test_openai_api_key_is_hidden_in_settings_representation(monkeypatch) -> None:
+    database_url = ("postgresql+psycopg2://user:password@localhost/test_database")
+    api_key = "test-openai-api-key"
+
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        database_url
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_OPENAI_API_KEY",
+        api_key
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == api_key
+    assert api_key not in repr(settings)
+
+
+def test_embedding_model_defaults_to_text_embedding_3_small(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.delenv(
+        "RAG_FIREWALL_EMBEDDING_MODEL",
+        raising=False
+    )
+
+    settings = Settings(_env_file=None)
+    assert settings.embedding_model == "text-embedding-3-small"
+
+
+@pytest.mark.parametrize(
+    "invalid_model",
+    [
+        "",
+        " ",
+        "model name with spaces",
+        "x" * 101,
+    ],
+)
+def test_embedding_model_rejects_invalid_values(monkeypatch, invalid_model: str) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_EMBEDDING_MODEL",
+        invalid_model
+    )
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

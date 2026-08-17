@@ -1,7 +1,8 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
+from pgvector.sqlalchemy import VECTOR
 
 from backend.app.db.models import Document, DocumentChunk, User, UserRole
-
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS
 
 def test_user_model_has_only_expected_columns() -> None:
     column_names = set(User.__table__.columns.keys())
@@ -112,6 +113,7 @@ def test_document_chunk_model_has_expected_columns() -> None:
         "document_id",
         "chunk_index",
         "content",
+        "embedding"
     }
 
 
@@ -152,3 +154,26 @@ def test_document_chunks_have_parent_and_ordering_constraints() -> None:
 
     assert ("ck_document_chunks_chunk_index_nonnegative" in check_constraint_names)
     assert ("ck_document_chunks_content_not_empty" in check_constraint_names)
+
+
+def test_document_chunk_embedding_is_required_and_fixed_dimension() -> None:
+    embedding_column = DocumentChunk.__table__.columns["embedding"]
+
+    assert embedding_column.nullable is False
+    assert isinstance(embedding_column.type, VECTOR)
+    assert embedding_column.type.dim == EMBEDDING_DIMENSIONS
+
+
+def test_document_chunk_has_hnsw_cosine_index() -> None:
+    embedding_index = next(
+        index
+        for index in DocumentChunk.__table__.indexes
+        if index.name == "ix_document_chunks_embedding_hnsw"
+    )
+
+    assert tuple(column.name for column in embedding_index.columns) == ("embedding",)
+
+    postgresql_options = embedding_index.dialect_options["postgresql"]
+
+    assert postgresql_options["using"] == "hnsw"
+    assert postgresql_options["ops"] == {"embedding": "vector_cosine_ops"}

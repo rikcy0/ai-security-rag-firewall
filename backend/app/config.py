@@ -47,6 +47,15 @@ class Settings(BaseSettings):
         le=2_000
     )
 
+    openai_api_key: SecretStr | None = None
+
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+
     prompt_injection_block_threshold: int = Field(
         default=50,
         ge=1,

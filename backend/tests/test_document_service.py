@@ -11,6 +11,7 @@ from backend.app.services.documents import (
     UnsupportedDocumentTypeError, create_document, get_document_for_owner, list_documents_for_owner)
 from backend.app.security.prompt_injection import PromptInjectionCategory, PromptInjectionDecision
 from backend.app.services import documents as document_service
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingGenerationError, EmbeddingProvider
 
 OWNER_ID = uuid4()
 
@@ -24,11 +25,23 @@ def database_session() -> Mock:
         document.id = uuid4()
 
     session.flush.side_effect = assign_document_id
-
     return session
 
+@pytest.fixture
+def embedding_provider() -> Mock:
+    provider = Mock(spec=EmbeddingProvider)
 
-def test_create_document_persists_document_and_chunks(database_session: Mock) -> None:
+    provider.embed_texts.side_effect = lambda texts: [
+        [float(index + 1)] * EMBEDDING_DIMENSIONS
+        for index, _ in enumerate(texts)
+    ]
+    return provider
+
+
+def test_create_document_persists_document_and_chunks(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     document = create_document(
         database_session,
         OWNER_ID,
@@ -38,6 +51,7 @@ def test_create_document_persists_document_and_chunks(database_session: Mock) ->
         chunk_size=4,
         chunk_overlap=1,
         prompt_injection_block_threshold=50,
+        embedding_provider=embedding_provider,
     )
 
     assert isinstance(document, Document)
@@ -55,13 +69,21 @@ def test_create_document_persists_document_and_chunks(database_session: Mock) ->
     assert [chunk.chunk_index for chunk in persisted_chunks] == [0, 1, 2]
     assert [chunk.content for chunk in persisted_chunks] == ["abcd", "defg", "ghij"]
     assert all(chunk.document_id == document.id for chunk in persisted_chunks)
+    embedding_provider.embed_texts.assert_called_once_with(
+        ["abcd", "defg", "ghij"]
+    )
+    assert [chunk.embedding[0] for chunk in persisted_chunks] == [1.0, 2.0, 3.0]
+    assert all(len(chunk.embedding) == EMBEDDING_DIMENSIONS for chunk in persisted_chunks)
 
     database_session.commit.assert_called_once()
     database_session.rollback.assert_not_called()
     database_session.refresh.assert_called_once_with(document)
 
 
-def test_markdown_extension_uses_canonical_content_type(database_session: Mock) -> None:
+def test_markdown_extension_uses_canonical_content_type(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     document = create_document(
         database_session,
         OWNER_ID,
@@ -71,6 +93,7 @@ def test_markdown_extension_uses_canonical_content_type(database_session: Mock) 
         chunk_size=100,
         chunk_overlap=20,
         prompt_injection_block_threshold=50,
+        embedding_provider=embedding_provider,
     )
 
     assert document.filename == "notes.md"
@@ -85,7 +108,11 @@ def test_markdown_extension_uses_canonical_content_type(database_session: Mock) 
         "folder/"
     ]
 )
-def test_missing_filename_is_rejected(database_session: Mock, filename: str | None) -> None:
+def test_missing_filename_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+    filename: str | None,
+) -> None:
     with pytest.raises(InvalidDocumentError, match="A filename is required"):
         create_document(
             database_session,
@@ -96,13 +123,17 @@ def test_missing_filename_is_rejected(database_session: Mock, filename: str | No
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
     database_session.commit.assert_not_called()
 
 
-def test_oversized_filename_is_rejected(database_session: Mock) -> None:
+def test_oversized_filename_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     filename = f"{'a' * 252}.txt"
 
     with pytest.raises(InvalidDocumentError, match="Filename must not exceed 255 characters"):
@@ -115,12 +146,16 @@ def test_oversized_filename_is_rejected(database_session: Mock) -> None:
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
 
 
-def test_unsupported_extension_is_rejected(database_session: Mock) -> None:
+def test_unsupported_extension_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     with pytest.raises(UnsupportedDocumentTypeError, match=r"Only \.txt and \.md documents are supported"):
         create_document(
             database_session,
@@ -131,12 +166,16 @@ def test_unsupported_extension_is_rejected(database_session: Mock) -> None:
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
 
 
-def test_oversized_document_is_rejected(database_session: Mock) -> None:
+def test_oversized_document_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     with pytest.raises(DocumentTooLargeError, match="Document exceeds the maximum upload size"):
         create_document(
             database_session,
@@ -147,6 +186,7 @@ def test_oversized_document_is_rejected(database_session: Mock) -> None:
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
@@ -159,7 +199,11 @@ def test_oversized_document_is_rejected(database_session: Mock) -> None:
         b"  \n\t  "
     ]
 )
-def test_document_without_readable_text_is_rejected(database_session: Mock, content_bytes: bytes) -> None:
+def test_document_without_readable_text_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+    content_bytes: bytes,
+) -> None:
     with pytest.raises(InvalidDocumentError, match="Document contains no readable text"):
         create_document(
             database_session,
@@ -170,12 +214,16 @@ def test_document_without_readable_text_is_rejected(database_session: Mock, cont
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
 
 
-def test_invalid_utf8_is_rejected(database_session: Mock) -> None:
+def test_invalid_utf8_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     with pytest.raises(InvalidDocumentError, match="Document must contain valid UTF-8 text"):
         create_document(
             database_session,
@@ -186,12 +234,16 @@ def test_invalid_utf8_is_rejected(database_session: Mock) -> None:
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
 
 
-def test_null_character_is_rejected(database_session: Mock) -> None:
+def test_null_character_is_rejected(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     with pytest.raises(InvalidDocumentError, match="unsupported null character"):
         create_document(
             database_session,
@@ -202,12 +254,16 @@ def test_null_character_is_rejected(database_session: Mock) -> None:
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.add.assert_not_called()
 
 
-def test_database_failure_rolls_back_transaction(database_session: Mock) -> None:
+def test_database_failure_rolls_back_transaction(
+    database_session: Mock,
+    embedding_provider: Mock,
+) -> None:
     database_session.commit.side_effect = SQLAlchemyError("database failure")
 
     with pytest.raises(SQLAlchemyError):
@@ -220,6 +276,7 @@ def test_database_failure_rolls_back_transaction(database_session: Mock) -> None
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     database_session.rollback.assert_called_once()
@@ -308,7 +365,11 @@ def test_get_document_for_owner_returns_none_without_match(database_session: Moc
     assert result is None
 
 
-def test_prompt_injection_is_rejected_before_chunking_or_persistence(database_session: Mock, monkeypatch) -> None:
+def test_prompt_injection_is_rejected_before_chunking_or_persistence(
+    database_session: Mock,
+    embedding_provider: Mock,
+    monkeypatch,
+) -> None:
     chunker = Mock()
 
     monkeypatch.setattr(
@@ -333,6 +394,7 @@ def test_prompt_injection_is_rejected_before_chunking_or_persistence(database_se
             chunk_size=100,
             chunk_overlap=20,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
         )
 
     result = exc_info.value.result
@@ -343,6 +405,71 @@ def test_prompt_injection_is_rejected_before_chunking_or_persistence(database_se
     assert (PromptInjectionCategory.SYSTEM_PROMPT_EXTRACTION in result.matched_categories)
 
     chunker.assert_not_called()
+    database_session.add.assert_not_called()
+    database_session.add_all.assert_not_called()
+    database_session.flush.assert_not_called()
+    database_session.commit.assert_not_called()
+    database_session.rollback.assert_not_called()
+
+
+def test_embedding_failure_does_not_start_database_transaction(
+    database_session: Mock,
+    embedding_provider: Mock
+) -> None:
+    embedding_provider.embed_texts.side_effect = (
+        EmbeddingGenerationError(
+            "Embedding provider request failed"
+        )
+    )
+
+    with pytest.raises(
+        EmbeddingGenerationError,
+        match="Embedding provider request failed",
+    ):
+        create_document(
+            database_session,
+            OWNER_ID,
+            "document.txt",
+            b"document content",
+            max_upload_size_bytes=100,
+            chunk_size=100,
+            chunk_overlap=20,
+            prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
+        )
+
+    embedding_provider.embed_texts.assert_called_once_with(["document content"])
+
+    database_session.add.assert_not_called()
+    database_session.add_all.assert_not_called()
+    database_session.flush.assert_not_called()
+    database_session.commit.assert_not_called()
+    database_session.rollback.assert_not_called()
+
+
+def test_embedding_count_mismatch_is_rejected_before_persistence(
+    database_session: Mock,
+    embedding_provider: Mock
+) -> None:
+    embedding_provider.embed_texts.side_effect = None
+    embedding_provider.embed_texts.return_value = []
+
+    with pytest.raises(
+        EmbeddingGenerationError,
+        match="unexpected result count",
+    ):
+        create_document(
+            database_session,
+            OWNER_ID,
+            "document.txt",
+            b"document content",
+            max_upload_size_bytes=100,
+            chunk_size=100,
+            chunk_overlap=20,
+            prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider,
+        )
+
     database_session.add.assert_not_called()
     database_session.add_all.assert_not_called()
     database_session.flush.assert_not_called()
