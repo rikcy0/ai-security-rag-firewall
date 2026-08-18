@@ -39,6 +39,8 @@ def test_openapi_schema_describes_application(client: TestClient) -> None:
     assert "post" in schema["paths"]["/documents"]
     assert "get" in schema["paths"]["/documents"]
     assert "get" in schema["paths"]["/documents/{document_id}"]
+    assert "/retrieval/search" in schema["paths"]
+    assert "post" in schema["paths"]["/retrieval/search"]
 
 
 def test_swagger_documentation_is_available(client: TestClient) -> None:
