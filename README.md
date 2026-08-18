@@ -1,10 +1,24 @@
 # AI Security RAG Firewall
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, and deterministic prompt-injection screening for uploaded UTF-8 text and Markdown documents. Planned stages will add embeddings, vector retrieval, question answering, query-time defenses, and security-event auditing.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, and pgvector-backed chunk indexing. Planned stages will add owner-scoped semantic retrieval, guarded question answering, and security-event auditing.
 
 ## Overview
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, and owner-isolated ingestion of UTF-8 text and Markdown documents. Planned stages will add embeddings, vector retrieval, question answering, and prompt-injection defenses.
+The implemented document-ingestion pipeline is:
+
+```text
+authenticated upload
+        ↓
+file and UTF-8 validation
+        ↓
+prompt-injection screening
+        ↓
+overlapping text chunking
+        ↓
+embedding generation
+        ↓
+PostgreSQL and pgvector persistence
+```
 
 Unlike a normal RAG chatbot, this project is designed to include security controls for:
 
@@ -24,6 +38,7 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Pydantic
 - PostgreSQL 16
 - pgvector
+- OpenAI Python SDK and Embeddings API
 - SQLAlchemy
 - Alembic
 - pwdlib with Argon2
@@ -67,11 +82,20 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Prompt-injection scanning before document chunking or persistence
 - Generic rejection responses that do not expose detector scores or matched rules
 - PostgreSQL integration tests proving blocked documents and chunks are not persisted
+- Validated OpenAI API-key and embedding-model configuration
+- Application-defined embedding-provider boundary using structural typing
+- Synchronous OpenAI embedding generation with bounded request batches
+- Provider-response ordering, count, dimension, finite-value, and zero-vector validation
+- Fixed 1,536-dimension embeddings for `text-embedding-3-small`
+- Non-null pgvector embeddings stored with every document chunk
+- HNSW cosine-similarity index for document-chunk embeddings
+- Generic `503 Service Unavailable` responses for embedding-service failures
+- Pre-persistence embedding generation so provider failures do not create partial database records
+- Deterministic unit and PostgreSQL integration tests that do not contact OpenAI
 
 ## Roadmap
 
-- Embedding generation for stored document chunks
-- Vector similarity search
+- Owner-scoped semantic retrieval over stored chunk embeddings
 - RAG answer generation
 - Query-time prompt-injection enforcement
 - Contextual and model-assisted prompt-injection defenses
@@ -80,9 +104,8 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Adversarial test suite
 - More advanced token-aware and structure-aware chunking
 
-## Project Status
 
-The FastAPI backend, PostgreSQL/pgvector infrastructure, user authentication, role-based access control, and secure document-ingestion checkpoints are implemented.
+## Project Status
 
 Current capabilities include:
 
@@ -113,8 +136,13 @@ Current capabilities include:
 - Pre-persistence scanning of uploaded document content
 - Generic `422 Unprocessable Content` responses for blocked documents
 - Database-backed verification that blocked content is not persisted
+- Batched OpenAI embedding generation through an application-defined provider boundary
+- Fixed-dimension vector validation before persistence
+- pgvector-backed chunk embeddings
+- HNSW cosine-similarity indexing
+- Generic handling of unavailable or invalid embedding-provider responses
 
-Document upload, text chunking, and deterministic ingestion-time prompt-injection screening are implemented. Embedding generation, vector retrieval, query-time prompt-injection enforcement, contextual detection, and model-assisted defenses remain under development.
+Document upload, text chunking, ingestion-time prompt-injection screening, embedding generation, and pgvector-backed chunk indexing are implemented. Owner-scoped semantic retrieval, guarded RAG answer generation, query-time prompt-injection enforcement, contextual detection, and model-assisted defenses remain under development.
 
 ## Local Development
 
@@ -142,6 +170,17 @@ openssl rand -hex 32
 RAG_FIREWALL_SECRET_KEY=your-generated-secret
 RAG_FIREWALL_ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
+
+Configure the embedding provider before uploading documents:
+
+```env
+RAG_FIREWALL_OPENAI_API_KEY=your-api-key-here
+RAG_FIREWALL_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+The API key is optional during application startup so non-embedding functionality can still run locally. Document uploads return `503 Service Unavailable` when the embedding provider is not configured.
+
+Accepted document chunks are sent to the configured embedding provider. Do not upload sensitive or private material, and remember that real embedding requests may incur provider charges.
 
 The included database credentials are intended only for local development. Never commit `.env` or use the development credentials in production.
 
@@ -226,7 +265,7 @@ docker compose exec db psql \
 
 | Method | Endpoint | Purpose | Required access |
 | --- | --- | --- | --- |
-| `POST` | `/documents` | Upload and chunk a UTF-8 `.txt` or `.md` document | Authenticated user |
+| `POST` | `/documents` | Upload, screen, chunk, embed, and store a UTF-8 `.txt` or `.md` document | Authenticated user |
 | `GET` | `/documents` | List metadata for the current user's documents | Authenticated user |
 | `GET` | `/documents/{document_id}` | Return metadata for an owned document | Document owner |
 
@@ -243,6 +282,18 @@ Uploaded document text is screened for prompt-injection signals after UTF-8 vali
   "detail": "Document rejected by prompt-injection policy"
 }
 ```
+
+Accepted documents are divided into overlapping chunks and embedded before the database transaction begins. Every stored chunk receives a 1,536-dimension vector, and PostgreSQL indexes those vectors with HNSW using cosine distance.
+
+If embedding generation is unavailable or returns an invalid result, the upload receives:
+
+```json
+{
+  "detail": "Document embedding service is unavailable"
+}
+```
+
+Internal provider errors are not returned to clients, and embedding failures do not create document or chunk records.
 
 ### Run tests
 
@@ -265,6 +316,8 @@ Run the complete suite:
 ```bash
 python -m pytest backend/tests -v
 ```
+
+Automated tests use deterministic fake embedding providers. Running the test suite does not make OpenAI API requests or incur embedding charges.
 
 ### Stop PostgreSQL
 

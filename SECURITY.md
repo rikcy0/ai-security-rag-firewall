@@ -22,6 +22,8 @@ Primary risks addressed:
 - The planned retrieval pipeline will apply user authorization before content is sent to an LLM.
 - Planned security-event logging will support monitoring and auditing.
 - Uploaded document text is screened for prompt-injection signals before chunking and persistence.
+- Only accepted document chunks cross the external embedding-provider boundary.
+- Embedding-provider responses are treated as untrusted input and validated before persistence.
 - Future query and retrieval paths will apply the same security boundary before invoking AI providers.
 - Sensitive configuration values are stored in environment variables, not source code.
 
@@ -113,6 +115,9 @@ Primary risks addressed:
 - PostgreSQL foreign keys connect documents to users and chunks to documents.
 - Cascading deletion prevents orphaned documents and chunks.
 - Database constraints reject empty content, invalid chunk indexes, and duplicate chunk positions.
+- Every persisted chunk requires a fixed 1,536-dimension embedding.
+- Chunk embeddings are generated before the database transaction begins, so embedding failures do not create partial document records.
+- PostgreSQL indexes chunk embeddings with HNSW and cosine distance operations.
 
 ## Implemented Prompt-Injection Controls
 
@@ -145,6 +150,42 @@ Primary risks addressed:
 - Public responses do not reveal scores, categories, reasons, or matching content.
 - Internal detector results remain available for future security-event logging.
 - PostgreSQL integration tests verify that rejected uploads create neither document nor chunk rows.
+
+## Implemented Embedding Security Controls
+
+### Provider boundary
+
+- The OpenAI API key and embedding model are loaded through validated application settings.
+- The API key uses Pydantic `SecretStr` and is excluded from normal settings representations.
+- The application can start without an embedding API key, but document uploads return `503 Service Unavailable` until a provider is configured.
+- Application services depend on an embedding-provider protocol rather than directly constructing an OpenAI client.
+- The current OpenAI implementation uses the synchronous client to remain consistent with the synchronous FastAPI and SQLAlchemy architecture.
+- Provider clients are closed after the FastAPI dependency finishes handling the request.
+- Embedding requests use bounded batches instead of submitting an unlimited number of chunks at once.
+- Prompt-injection screening occurs before chunk text is sent to the embedding provider.
+
+### Provider-response validation
+
+- Every input chunk must receive exactly one provider result.
+- Provider response indexes are checked and used to restore input order.
+- Every vector value must be convertible to a finite floating-point number.
+- Every vector must contain exactly 1,536 values.
+- All-zero vectors are rejected because they are not useful for cosine similarity.
+- Invalid provider responses are translated into an application-specific embedding error.
+
+### Failure containment
+
+- Embeddings are generated before documents or chunks are added to the database session.
+- Provider failures and invalid responses therefore create neither document nor chunk rows.
+- Public failures use the generic message `Document embedding service is unavailable` and do not expose provider details.
+- Automated tests use deterministic fake providers and do not send document content or credentials to OpenAI.
+
+### Vector storage
+
+- PostgreSQL requires a non-null `vector(1536)` value for every document chunk.
+- An HNSW index uses `vector_cosine_ops` for future cosine-similarity retrieval.
+- Embeddings remain connected to document ownership through the chunk and document foreign-key relationships.
+- The vector index is a performance structure, not an authorization control; future retrieval queries must still filter by the authenticated owner.
 
 ## Current Limitations
 
@@ -193,7 +234,17 @@ The current prompt-injection detector is intentionally limited:
 - Model-assisted classification, output screening, rate limiting, quarantine workflows, and human review are not implemented.
 - Prompt-injection detection is one defense layer and is not a guarantee that all attacks will be identified.
 
-Audit logging, vector retrieval controls, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
+The current embedding implementation is intentionally limited:
+
+- Accepted document chunks are sent to an external embedding provider.
+- Data-loss prevention, sensitive-data redaction, and provider-specific retention controls are not implemented.
+- Only one concrete provider and one fixed embedding dimension are currently supported.
+- Automatic retries, exponential backoff, circuit breaking, caching, and quota management are not implemented.
+- Stored embeddings should be treated as potentially sensitive derived data.
+- Semantic retrieval is not yet implemented, so the HNSW index is not yet queried by an API endpoint.
+- Owner-scoped authorization must be added to every future vector-retrieval query; the vector index does not provide tenant isolation by itself.
+
+Audit logging, owner-scoped semantic retrieval, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
 
 ## Responsible Disclosure
 
