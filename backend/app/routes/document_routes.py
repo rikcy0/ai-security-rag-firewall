@@ -1,8 +1,5 @@
 from typing import Annotated
 
-from collections.abc import Iterator
-
-from openai import OpenAI
 from uuid import UUID
 from fastapi import (
     APIRouter, Depends, File, HTTPException, UploadFile, status)
@@ -16,30 +13,8 @@ from backend.app.security.authentication import get_current_user
 from backend.app.services.documents import (
     DocumentTooLargeError, InvalidDocumentError, PromptInjectionDetectedError,
     UnsupportedDocumentTypeError, create_document, get_document_for_owner, list_documents_for_owner)
-from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider, OpenAIEmbeddingProvider
-
-
-EMBEDDING_SERVICE_UNAVAILABLE_DETAIL = "Document embedding service is unavailable"
-
-
-def get_embedding_provider() -> Iterator[EmbeddingProvider]:
-    settings = get_settings()
-
-    if settings.openai_api_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=EMBEDDING_SERVICE_UNAVAILABLE_DETAIL
-        )
-
-    client = OpenAI(api_key=settings.openai_api_key.get_secret_value())
-
-    try:
-        yield OpenAIEmbeddingProvider(
-            client=client,
-            model=settings.embedding_model
-        )
-    finally:
-        client.close()
+from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider
+from backend.app.routes.dependencies import EMBEDDING_SERVICE_UNAVAILABLE_DETAIL, get_embedding_provider
 
 
 router = APIRouter(
