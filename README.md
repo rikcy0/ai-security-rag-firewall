@@ -1,6 +1,6 @@
 # AI Security RAG Firewall
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, and pgvector-backed chunk indexing. Planned stages will add owner-scoped semantic retrieval, guarded question answering, and security-event auditing.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, and owner-scoped semantic retrieval. Planned stages will add guarded RAG question answering and security-event auditing.
 
 ## Overview
 
@@ -18,6 +18,22 @@ overlapping text chunking
 embedding generation
         ↓
 PostgreSQL and pgvector persistence
+```
+
+The implemented semantic-retrieval pipeline is:
+
+```text
+authenticated query
+        ↓
+query and top-k validation
+        ↓
+query embedding
+        ↓
+SQL-enforced owner filtering
+        ↓
+HNSW cosine-similarity search
+        ↓
+ranked owned chunks
 ```
 
 Unlike a normal RAG chatbot, this project is designed to include security controls for:
@@ -92,11 +108,19 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Generic `503 Service Unavailable` responses for embedding-service failures
 - Pre-persistence embedding generation so provider failures do not create partial database records
 - Deterministic unit and PostgreSQL integration tests that do not contact OpenAI
+- Authenticated `POST /retrieval/search` endpoint
+- Whitespace-normalized queries limited to 2,000 characters
+- Bounded retrieval with a default `top_k` of 5 and maximum of 20
+- SQL-enforced document ownership before similarity ranking and limiting
+- Cosine-similarity ranking over pgvector chunk embeddings
+- Transaction-local strict HNSW iterative scanning for filtered retrieval
+- Safe retrieval responses containing approved chunk and source fields only
+- Cross-user isolation tests using deliberately closer foreign vectors
+- End-to-end tests covering upload, embedding, storage, query embedding, and retrieval
 
 ## Roadmap
 
-- Owner-scoped semantic retrieval over stored chunk embeddings
-- RAG answer generation
+- Guarded RAG query and answer generation
 - Query-time prompt-injection enforcement
 - Contextual and model-assisted prompt-injection defenses
 - Security event logs
@@ -141,8 +165,13 @@ Current capabilities include:
 - pgvector-backed chunk embeddings
 - HNSW cosine-similarity indexing
 - Generic handling of unavailable or invalid embedding-provider responses
+- Authenticated owner-scoped semantic search
+- Query embedding through the shared provider boundary
+- SQL ownership filtering before `top_k`
+- Cosine-similarity scores and source-aware chunk responses
+- Strict HNSW iterative scanning for owner-filtered searches
 
-Document upload, text chunking, ingestion-time prompt-injection screening, embedding generation, and pgvector-backed chunk indexing are implemented. Owner-scoped semantic retrieval, guarded RAG answer generation, query-time prompt-injection enforcement, contextual detection, and model-assisted defenses remain under development.
+Document ingestion, text chunking, ingestion-time prompt-injection screening, embedding generation, pgvector-backed chunk indexing, and owner-scoped semantic retrieval are implemented. Guarded RAG answer generation, query-time prompt-injection enforcement, contextual detection, model-assisted defenses, and security-event auditing remain under development.
 
 ## Local Development
 
@@ -178,7 +207,7 @@ RAG_FIREWALL_OPENAI_API_KEY=your-api-key-here
 RAG_FIREWALL_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-The API key is optional during application startup so non-embedding functionality can still run locally. Document uploads return `503 Service Unavailable` when the embedding provider is not configured.
+The API key is optional during application startup so non-embedding functionality can still run locally. Document uploads and semantic searches return `503 Service Unavailable` when the embedding provider is not configured.
 
 Accepted document chunks are sent to the configured embedding provider. Do not upload sensitive or private material, and remember that real embedding requests may incur provider charges.
 
@@ -289,11 +318,57 @@ If embedding generation is unavailable or returns an invalid result, the upload 
 
 ```json
 {
-  "detail": "Document embedding service is unavailable"
+  "detail": "Embedding service is unavailable"
 }
 ```
 
 Internal provider errors are not returned to clients, and embedding failures do not create document or chunk records.
+
+### Semantic retrieval endpoint
+
+| Method | Endpoint | Purpose | Required access |
+| --- | --- | --- | --- |
+| `POST` | `/retrieval/search` | Retrieve semantically relevant chunks from the current user's documents | Authenticated user |
+
+Example request:
+
+```json
+{
+  "query": "How should API keys be stored?",
+  "top_k": 5
+}
+```
+
+Example response:
+
+```json
+{
+  "results": [
+    {
+      "chunk_id": "00000000-0000-0000-0000-000000000000",
+      "document_id": "00000000-0000-0000-0000-000000000000",
+      "filename": "security-notes.md",
+      "chunk_index": 2,
+      "content": "API keys should be stored in environment variables.",
+      "similarity": 0.91
+    }
+  ]
+}
+```
+
+The authenticated user's database UUID is the only source of ownership. Clients cannot provide an `owner_id`, and administrators do not automatically bypass document ownership.
+
+Ownership filtering occurs inside PostgreSQL before similarity ranking and `top_k` are applied. Retrieval responses exclude owner identifiers and embedding vectors.
+
+An owner with no stored chunks receives:
+
+```json
+{
+  "results": []
+}
+```
+
+Semantic retrieval embeds and ranks the query but does not invoke a chat model or generate an answer. Query-time prompt-injection enforcement and guarded answer generation belong to the next checkpoint.
 
 ### Run tests
 
