@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from pydantic import SecretStr
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from backend.app.security.prompt_injection import (
 from backend.app.services.documents import (
     DocumentTooLargeError, InvalidDocumentError, UnsupportedDocumentTypeError,
     PromptInjectionDetectedError)
+from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider
 
 
 PASSWORD_HASH = "$argon2id$test-password-hash"
@@ -53,6 +55,8 @@ def document_settings(monkeypatch) -> SimpleNamespace:
         chunk_size_characters=4,
         chunk_overlap_characters=1,
         prompt_injection_block_threshold=50,
+        openai_api_key=None,
+        embedding_model="text-embedding-3-small"
     )
 
     monkeypatch.setattr(
@@ -62,6 +66,15 @@ def document_settings(monkeypatch) -> SimpleNamespace:
     )
 
     return settings
+
+
+@pytest.fixture
+def embedding_provider() -> Iterator[Mock]:
+    provider = Mock(spec=EmbeddingProvider)
+
+    app.dependency_overrides[document_routes.get_embedding_provider] = lambda: provider
+    yield provider
+    app.dependency_overrides.pop(document_routes.get_embedding_provider, None)
 
 
 def make_document(owner_id) -> Document:
@@ -83,12 +96,12 @@ def make_document(owner_id) -> Document:
     return document
 
 
-# 
 def test_authenticated_user_can_upload_document(
     client: TestClient,
     database_session: Mock,
     authenticated_user: User,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     monkeypatch) -> None:
     stored_document = make_document(authenticated_user.id)
     document_creator = Mock(return_value=stored_document)
@@ -139,6 +152,7 @@ def test_authenticated_user_can_upload_document(
         "chunk_size": 4,
         "chunk_overlap": 1,
         "prompt_injection_block_threshold": 50,
+        "embedding_provider": embedding_provider,
     }
 
 
@@ -148,6 +162,7 @@ def test_route_reads_only_limit_plus_one_byte(
     database_session: Mock,
     authenticated_user: User,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     monkeypatch) -> None:
     document_creator = Mock(
         side_effect=DocumentTooLargeError("Document exceeds the maximum upload size")
@@ -191,6 +206,7 @@ def test_document_errors_are_mapped_to_http_responses(
     database_session: Mock,
     authenticated_user: User,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     service_error: Exception,
     expected_status: int,
     monkeypatch) -> None:
@@ -223,6 +239,7 @@ def test_upload_requires_file(
     database_session: Mock,
     authenticated_user: User,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     monkeypatch) -> None:
     document_creator = Mock()
 
@@ -242,6 +259,7 @@ def test_upload_requires_authentication(
     client: TestClient,
     database_session: Mock,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     monkeypatch) -> None:
     document_creator = Mock()
 
@@ -429,6 +447,7 @@ def test_prompt_injection_rejection_returns_generic_response(
     database_session: Mock,
     authenticated_user: User,
     document_settings: SimpleNamespace,
+    embedding_provider: Mock,
     monkeypatch) -> None:
     detector_result = PromptInjectionResult(
         decision=PromptInjectionDecision.BLOCK,
@@ -470,3 +489,116 @@ def test_prompt_injection_rejection_returns_generic_response(
     assert "instruction_override" not in response_text
     assert "instruction override attempt" not in response_text
     assert "70" not in response_text
+
+
+def test_upload_rejects_missing_embedding_configuration(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    monkeypatch # no embedding provider is requested
+) -> None:
+    document_creator = Mock()
+
+    monkeypatch.setattr(
+        document_routes,
+        "create_document",
+        document_creator,
+    )
+
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "document.txt",
+                b"content",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Document embedding service is unavailable"}
+    document_creator.assert_not_called()
+
+
+def test_embedding_failure_returns_generic_service_unavailable(
+    client: TestClient,
+    database_session: Mock,
+    authenticated_user: User,
+    document_settings: SimpleNamespace,
+    embedding_provider: Mock,
+    monkeypatch,
+) -> None:
+    internal_error = (
+        "OpenAI request failed with internal provider details"
+    )
+    document_creator = Mock(
+        side_effect=EmbeddingGenerationError(internal_error)
+    )
+
+    monkeypatch.setattr(
+        document_routes,
+        "create_document",
+        document_creator,
+    )
+
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "document.txt",
+                b"content",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Document embedding service is unavailable"}
+    assert internal_error not in response.text
+
+
+def test_embedding_provider_dependency_creates_and_closes_client(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        openai_api_key=SecretStr("fake-test-api-key"),
+        embedding_model="text-embedding-3-small",
+    )
+
+    openai_client = Mock()
+    embedding_provider = Mock(spec=EmbeddingProvider)
+
+    openai_client_factory = Mock(return_value=openai_client)
+    embedding_provider_factory = Mock(return_value=embedding_provider)
+
+    monkeypatch.setattr(
+        document_routes,
+        "get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        document_routes,
+        "OpenAI",
+        openai_client_factory,
+    )
+    monkeypatch.setattr(
+        document_routes,
+        "OpenAIEmbeddingProvider",
+        embedding_provider_factory,
+    )
+
+    provider_dependency = document_routes.get_embedding_provider()
+
+    returned_provider = next(provider_dependency)
+
+    assert returned_provider is embedding_provider
+
+    openai_client_factory.assert_called_once_with(api_key="fake-test-api-key")
+    embedding_provider_factory.assert_called_once_with(
+        client=openai_client,
+        model="text-embedding-3-small"
+    )
+
+    openai_client.close.assert_not_called()
+    provider_dependency.close()
+    openai_client.close.assert_called_once_with()

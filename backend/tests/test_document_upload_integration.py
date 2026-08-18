@@ -3,12 +3,15 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from unittest.mock import Mock
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from backend.app.db.database import SessionLocal
 from backend.app.db.models import Document, DocumentChunk, User
 from backend.app.routes import document_routes
+from backend.app.main import app
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 
 
 TEST_PASSWORD = "integration-test-password"
@@ -27,6 +30,20 @@ def upload_username() -> Iterator[str]:
             )
         )
         database_session.commit()
+
+
+@pytest.fixture
+def embedding_provider() -> Iterator[Mock]:
+    provider = Mock(spec=EmbeddingProvider)
+
+    provider.embed_texts.side_effect = lambda texts: [
+        [float(index + 1)] * EMBEDDING_DIMENSIONS
+        for index, _ in enumerate(texts)
+    ]
+
+    app.dependency_overrides[document_routes.get_embedding_provider] = lambda: provider
+    yield provider
+    app.dependency_overrides.pop(document_routes.get_embedding_provider, None)
 
 
 def register_and_login(client: TestClient, username: str) -> tuple[str, UUID]:
@@ -61,7 +78,9 @@ def register_and_login(client: TestClient, username: str) -> tuple[str, UUID]:
 def test_authenticated_upload_persists_owned_document_and_chunks(
     client: TestClient,
     upload_username: str,
-    monkeypatch) -> None:
+    embedding_provider: Mock,
+    monkeypatch
+    ) -> None:
     settings = SimpleNamespace(
         max_upload_size_bytes=100,
         chunk_size_characters=4,
@@ -131,12 +150,19 @@ def test_authenticated_upload_persists_owned_document_and_chunks(
         assert [chunk.chunk_index for chunk in stored_chunks] == [0, 1, 2]
         assert [chunk.content for chunk in stored_chunks] == ["abcd", "defg", "ghij"]
 
+        embedding_provider.embed_texts.assert_called_once_with(
+            ["abcd", "defg", "ghij"]
+        )
+        assert all(len(chunk.embedding) == EMBEDDING_DIMENSIONS for chunk in stored_chunks)
+        assert [chunk.embedding[0] for chunk in stored_chunks] == pytest.approx([1.0, 2.0, 3.0])
 
 @pytest.mark.integration
 def test_oversized_upload_is_not_persisted(
     client: TestClient,
     upload_username: str,
-    monkeypatch) -> None:
+    embedding_provider: Mock,
+    monkeypatch
+    ) -> None:
     settings = SimpleNamespace(
         max_upload_size_bytes=4,
         chunk_size_characters=4,
@@ -187,13 +213,16 @@ def test_oversized_upload_is_not_persisted(
 
         assert stored_documents == []
         assert stored_chunks == []
+        embedding_provider.embed_texts.assert_not_called()
 
 
 @pytest.mark.integration
 def test_prompt_injection_upload_is_not_persisted(
     client: TestClient,
     upload_username: str,
-    monkeypatch) -> None:
+    embedding_provider: Mock,
+    monkeypatch
+    ) -> None:
 
     settings = SimpleNamespace(
         max_upload_size_bytes=200,
@@ -247,3 +276,4 @@ def test_prompt_injection_upload_is_not_persisted(
 
         assert stored_documents == []
         assert stored_chunks == []
+        embedding_provider.embed_texts.assert_not_called()

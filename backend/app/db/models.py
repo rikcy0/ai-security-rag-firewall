@@ -3,12 +3,15 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, ForeignKey, Integer,
+    Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer,
     String, Text, UniqueConstraint, func, true)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from pgvector.sqlalchemy import VECTOR
+
 from backend.app.db.database import Base
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS
 
 
 class UserRole(str, Enum):
@@ -124,6 +127,12 @@ class DocumentChunk(Base):
             "char_length(content) > 0",
             name="ck_document_chunks_content_not_empty"
         ),
+        Index(
+            "ix_document_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -146,5 +155,9 @@ class DocumentChunk(Base):
     )
     content: Mapped[str] = mapped_column(
         Text,
+        nullable=False
+    )
+    embedding: Mapped[list[float]] = mapped_column(
+        VECTOR(EMBEDDING_DIMENSIONS),
         nullable=False
     )

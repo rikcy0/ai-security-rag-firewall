@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from uuid import UUID, uuid4
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import delete, select
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.app.db.database import SessionLocal
 from backend.app.db.models import Document, DocumentChunk, User
 from backend.app.services import documents as document_service
-
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 
 PASSWORD_HASH = "$argon2id$test-password-hash"
 
@@ -35,9 +36,19 @@ def service_owner_id() -> Iterator[UUID]:
         )
         database_session.commit()
 
+@pytest.fixture
+def embedding_provider() -> Mock:
+    provider = Mock(spec=EmbeddingProvider)
+
+    provider.embed_texts.side_effect = lambda texts: [
+        [float(index + 1)] * EMBEDDING_DIMENSIONS
+        for index, _ in enumerate(texts)
+    ]
+    return provider
+
 
 @pytest.mark.integration
-def test_service_persists_document_and_ordered_chunks(service_owner_id: UUID) -> None:
+def test_service_persists_document_and_ordered_chunks(service_owner_id: UUID, embedding_provider: Mock) -> None:
     with SessionLocal() as database_session:
         document = document_service.create_document(
             database_session,
@@ -48,6 +59,7 @@ def test_service_persists_document_and_ordered_chunks(service_owner_id: UUID) ->
             chunk_size=4,
             chunk_overlap=1,
             prompt_injection_block_threshold=50,
+            embedding_provider=embedding_provider
         )
         document_id = document.id
 
@@ -76,9 +88,16 @@ def test_service_persists_document_and_ordered_chunks(service_owner_id: UUID) ->
         assert [chunk.content for chunk in stored_chunks] == ["abcd", "defg", "ghij"]
         assert all(chunk.document_id == document_id for chunk in stored_chunks)
 
+        embedding_provider.embed_texts.assert_called_once_with(["abcd", "defg", "ghij"])
+        assert all(len(chunk.embedding) == EMBEDDING_DIMENSIONS for chunk in stored_chunks)
+        assert [chunk.embedding[0] for chunk in stored_chunks] == pytest.approx([1.0, 2.0, 3.0])
+
 
 @pytest.mark.integration
-def test_service_rolls_back_document_when_chunk_insert_fails(service_owner_id: UUID, monkeypatch) -> None:
+def test_service_rolls_back_document_when_chunk_insert_fails(
+    service_owner_id: UUID, 
+    embedding_provider: Mock,
+    monkeypatch) -> None:
     def invalid_chunk_text(text: str, chunk_size: int, overlap: int,) -> list[str]:
         return ["valid chunk", ""]
 
@@ -99,6 +118,7 @@ def test_service_rolls_back_document_when_chunk_insert_fails(service_owner_id: U
                 chunk_size=100,
                 chunk_overlap=20,
                 prompt_injection_block_threshold=50,
+                embedding_provider=embedding_provider
             )
 
     with SessionLocal() as database_session:
@@ -118,3 +138,6 @@ def test_service_rolls_back_document_when_chunk_insert_fails(service_owner_id: U
         # PostgreSQL rejects an empty chunk in atomic transaction
         assert stored_document is None
         assert stored_chunks == []
+
+        embedding_provider.embed_texts.assert_called_once_with(["valid chunk", ""]
+    )

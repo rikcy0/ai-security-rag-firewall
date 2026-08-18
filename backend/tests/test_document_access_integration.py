@@ -3,12 +3,15 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from unittest.mock import Mock
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from backend.app.db.database import SessionLocal
 from backend.app.db.models import User
 from backend.app.routes import document_routes
+from backend.app.main import app
+from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 
 
 TEST_PASSWORD = "integration-test-password"
@@ -60,6 +63,20 @@ def document_access_settings(monkeypatch) -> SimpleNamespace:
     return settings
 
 
+@pytest.fixture
+def embedding_provider() -> Iterator[Mock]:
+    provider = Mock(spec=EmbeddingProvider)
+
+    provider.embed_texts.side_effect = lambda texts: [
+        [float(index + 1)] * EMBEDDING_DIMENSIONS
+        for index, _ in enumerate(texts)
+    ]
+
+    app.dependency_overrides[document_routes.get_embedding_provider] = lambda: provider
+    yield provider
+    app.dependency_overrides.pop(document_routes.get_embedding_provider, None)
+
+
 def register_and_login(client: TestClient, username: str) -> str:
     registration_response = client.post(
         "/auth/register",
@@ -106,7 +123,9 @@ def upload_document(client: TestClient, access_token: str, filename: str, conten
 def test_each_user_lists_only_their_own_documents(
     client: TestClient,
     document_access_usernames: tuple[str, str],
-    document_access_settings: SimpleNamespace) -> None:
+    document_access_settings: SimpleNamespace,
+    embedding_provider: Mock
+) -> None:
 
     first_username, second_username = document_access_usernames
 
@@ -126,6 +145,17 @@ def test_each_user_lists_only_their_own_documents(
         "second-owner-notes.txt",
         b"klmnopqrst"
     )
+
+    assert embedding_provider.embed_texts.call_count == 2
+
+    embedding_calls = [
+        provider_call.args[0]
+        for provider_call in embedding_provider.embed_texts.call_args_list
+    ]
+    assert embedding_calls == [
+        ["abcd", "defg", "ghij"],
+        ["klmn", "nopq", "qrst"],
+    ]
 
     first_response = client.get(
         "/documents",
@@ -157,7 +187,9 @@ def test_each_user_lists_only_their_own_documents(
 def test_user_cannot_retrieve_another_users_document(
     client: TestClient,
     document_access_usernames: tuple[str, str],
-    document_access_settings: SimpleNamespace) -> None:
+    document_access_settings: SimpleNamespace,
+    embedding_provider: Mock
+) -> None:
 
     owner_username, other_username = document_access_usernames
 
@@ -170,6 +202,8 @@ def test_user_cannot_retrieve_another_users_document(
         "private-security-notes.txt",
         b"abcdefghij",
     )
+
+    embedding_provider.embed_texts.assert_called_once_with(["abcd", "defg", "ghij"])
 
     owner_response = client.get(
         f"/documents/{document['id']}",

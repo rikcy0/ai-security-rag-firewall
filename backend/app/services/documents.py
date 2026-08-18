@@ -10,6 +10,8 @@ from backend.app.rag.chunker import chunk_text
 from backend.app.security.prompt_injection import (
     PromptInjectionDecision, PromptInjectionResult, analyze_prompt_injection
 )
+from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider
+
 
 ALLOWED_DOCUMENT_EXTENSIONS = {
     ".txt": "text/plain",
@@ -93,7 +95,8 @@ def create_document(
     max_upload_size_bytes: int,
     chunk_size: int,
     chunk_overlap: int,
-    prompt_injection_block_threshold: int
+    prompt_injection_block_threshold: int,
+    embedding_provider: EmbeddingProvider
 ) -> Document:
 
     safe_filename, content_type = normalize_document_filename(filename)
@@ -105,9 +108,14 @@ def create_document(
         raise PromptInjectionDetectedError(injection_result)
 
     chunks = chunk_text(content, chunk_size=chunk_size, overlap=chunk_overlap)
-
     if not chunks: 
         raise InvalidDocumentError("Document contains no readable text")
+
+    embeddings = embedding_provider.embed_texts(chunks)
+    if len(embeddings) != len(chunks):
+        raise EmbeddingGenerationError(
+            "Embedding provider returned an unexpected result count"
+        )
 
     document = Document(
         owner_id=owner_id,
@@ -128,7 +136,8 @@ def create_document(
             DocumentChunk(
                 document_id=document.id,
                 chunk_index=chunk_index,
-                content=chunk_content
+                content=chunk_content,
+                embedding=embeddings[chunk_index]
             )
             for chunk_index, chunk_content in enumerate(chunks)
         ]
