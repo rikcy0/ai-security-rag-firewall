@@ -5,7 +5,6 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from pydantic import SecretStr
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -13,6 +12,7 @@ from backend.app.db.database import get_db
 from backend.app.db.models import Document, User
 from backend.app.main import app
 from backend.app.routes import document_routes
+from backend.app.routes import dependencies as route_dependencies
 from backend.app.security.authentication import get_current_user
 from backend.app.security.prompt_injection import (
     PromptInjectionCategory, PromptInjectionDecision, PromptInjectionResult)
@@ -61,6 +61,11 @@ def document_settings(monkeypatch) -> SimpleNamespace:
 
     monkeypatch.setattr(
         document_routes,
+        "get_settings",
+        lambda: settings
+    )
+    monkeypatch.setattr(
+        route_dependencies,
         "get_settings",
         lambda: settings
     )
@@ -518,7 +523,7 @@ def test_upload_rejects_missing_embedding_configuration(
     )
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Document embedding service is unavailable"}
+    assert response.json() == {"detail": "Embedding service is unavailable"}
     document_creator.assert_not_called()
 
 
@@ -555,50 +560,5 @@ def test_embedding_failure_returns_generic_service_unavailable(
     )
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Document embedding service is unavailable"}
+    assert response.json() == {"detail": "Embedding service is unavailable"}
     assert internal_error not in response.text
-
-
-def test_embedding_provider_dependency_creates_and_closes_client(monkeypatch) -> None:
-    settings = SimpleNamespace(
-        openai_api_key=SecretStr("fake-test-api-key"),
-        embedding_model="text-embedding-3-small",
-    )
-
-    openai_client = Mock()
-    embedding_provider = Mock(spec=EmbeddingProvider)
-
-    openai_client_factory = Mock(return_value=openai_client)
-    embedding_provider_factory = Mock(return_value=embedding_provider)
-
-    monkeypatch.setattr(
-        document_routes,
-        "get_settings",
-        lambda: settings,
-    )
-    monkeypatch.setattr(
-        document_routes,
-        "OpenAI",
-        openai_client_factory,
-    )
-    monkeypatch.setattr(
-        document_routes,
-        "OpenAIEmbeddingProvider",
-        embedding_provider_factory,
-    )
-
-    provider_dependency = document_routes.get_embedding_provider()
-
-    returned_provider = next(provider_dependency)
-
-    assert returned_provider is embedding_provider
-
-    openai_client_factory.assert_called_once_with(api_key="fake-test-api-key")
-    embedding_provider_factory.assert_called_once_with(
-        client=openai_client,
-        model="text-embedding-3-small"
-    )
-
-    openai_client.close.assert_not_called()
-    provider_dependency.close()
-    openai_client.close.assert_called_once_with()

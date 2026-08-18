@@ -19,12 +19,12 @@ Primary risks addressed:
 - Authorization is enforced in backend application logic.
 - The LLM will not be trusted to make access-control decisions.
 - Document ownership is enforced before stored content can be accessed.
-- The planned retrieval pipeline will apply user authorization before content is sent to an LLM.
+- Semantic retrieval filters by the authenticated owner inside PostgreSQL before ranking and limiting results.
 - Planned security-event logging will support monitoring and auditing.
 - Uploaded document text is screened for prompt-injection signals before chunking and persistence.
 - Only accepted document chunks cross the external embedding-provider boundary.
 - Embedding-provider responses are treated as untrusted input and validated before persistence.
-- Future query and retrieval paths will apply the same security boundary before invoking AI providers.
+- Future answer-generation paths will reuse owner-scoped retrieval before sending context to an LLM.
 - Sensitive configuration values are stored in environment variables, not source code.
 
 ## Implemented Authentication Controls
@@ -157,7 +157,7 @@ Primary risks addressed:
 
 - The OpenAI API key and embedding model are loaded through validated application settings.
 - The API key uses Pydantic `SecretStr` and is excluded from normal settings representations.
-- The application can start without an embedding API key, but document uploads return `503 Service Unavailable` until a provider is configured.
+- The application can start without an embedding API key, but document uploads and semantic searches return `503 Service Unavailable` until a provider is configured.
 - Application services depend on an embedding-provider protocol rather than directly constructing an OpenAI client.
 - The current OpenAI implementation uses the synchronous client to remain consistent with the synchronous FastAPI and SQLAlchemy architecture.
 - Provider clients are closed after the FastAPI dependency finishes handling the request.
@@ -177,15 +177,51 @@ Primary risks addressed:
 
 - Embeddings are generated before documents or chunks are added to the database session.
 - Provider failures and invalid responses therefore create neither document nor chunk rows.
-- Public failures use the generic message `Document embedding service is unavailable` and do not expose provider details.
+- Public failures use the generic message `Embedding service is unavailable` and do not expose provider details.
 - Automated tests use deterministic fake providers and do not send document content or credentials to OpenAI.
 
 ### Vector storage
 
 - PostgreSQL requires a non-null `vector(1536)` value for every document chunk.
-- An HNSW index uses `vector_cosine_ops` for future cosine-similarity retrieval.
+- The HNSW index uses `vector_cosine_ops` for cosine-similarity retrieval.
 - Embeddings remain connected to document ownership through the chunk and document foreign-key relationships.
-- The vector index is a performance structure, not an authorization control; future retrieval queries must still filter by the authenticated owner.
+- The vector index is a performance structure, not an authorization control; retrieval queries separately enforce ownership in SQL.
+
+## Implemented Semantic-Retrieval Controls
+
+### Request validation
+
+- Semantic retrieval requires an authenticated, active database user.
+- Queries are stripped and limited to 2,000 characters.
+- Whitespace-only queries are rejected.
+- `top_k` defaults to `5` and is limited between `1` and `20`.
+- Extra request fields are rejected, including client-supplied ownership identifiers.
+
+### Ownership enforcement
+
+- The retrieval owner is always derived from the authenticated user's database UUID.
+- Clients cannot select or override the retrieval owner.
+- Administrators do not automatically bypass document ownership.
+- Document chunks are joined to their parent documents inside the retrieval query.
+- The owner condition is applied in SQL before cosine ranking and `LIMIT`.
+- Foreign-owned chunks are never returned, even when they are more similar than every owned chunk.
+
+### Vector retrieval
+
+- Search queries are embedded through the same validated provider boundary used during ingestion.
+- Chunk results are ordered by cosine distance.
+- API responses expose cosine similarity, where larger values represent closer matches.
+- HNSW iterative scanning uses transaction-local strict ordering to improve filtered retrieval.
+- Retrieval is read-only and does not commit database changes.
+- An empty owned corpus returns a successful empty result set.
+
+### Response safety
+
+- Responses contain only chunk UUID, document UUID, filename, chunk position, chunk content, and similarity.
+- Responses exclude `owner_id` and embedding vectors.
+- Embedding-provider failures return a generic `503 Service Unavailable`.
+- Provider-specific error details are not returned to clients.
+- Automated tests prove that closer foreign-owned vectors cannot cross the ownership boundary.
 
 ## Current Limitations
 
@@ -230,7 +266,8 @@ The current prompt-injection detector is intentionally limited:
 - The current detector may miss encoded instructions, creative misspellings, typoglycemia, homoglyph substitution, fragmented instructions, and semantic paraphrases.
 - Current rule weights have not been statistically calibrated against a large adversarial and benign corpus.
 - At the default threshold, every current rule is individually strong enough to block.
-- The detector currently protects document ingestion but is not yet connected to a user-query or retrieval pipeline.
+- The detector currently protects document ingestion but is not yet applied to semantic-search queries.
+- Semantic retrieval does not invoke an LLM, so retrieved content is not yet used for answer generation.
 - Model-assisted classification, output screening, rate limiting, quarantine workflows, and human review are not implemented.
 - Prompt-injection detection is one defense layer and is not a guarantee that all attacks will be identified.
 
@@ -241,10 +278,13 @@ The current embedding implementation is intentionally limited:
 - Only one concrete provider and one fixed embedding dimension are currently supported.
 - Automatic retries, exponential backoff, circuit breaking, caching, and quota management are not implemented.
 - Stored embeddings should be treated as potentially sensitive derived data.
-- Semantic retrieval is not yet implemented, so the HNSW index is not yet queried by an API endpoint.
-- Owner-scoped authorization must be added to every future vector-retrieval query; the vector index does not provide tenant isolation by itself.
+- Query text is sent to the configured external embedding provider.
+- Stored vectors and query vectors must use the same embedding model; changing models requires regenerating stored embeddings.
+- HNSW is an approximate index, so filtering can affect retrieval recall even though SQL ownership filtering prevents cross-user results.
+- The current shared vector index is appropriate for this local portfolio project but is not a complete large-scale tenant-isolation strategy.
+- Similarity scores have not been calibrated into a minimum relevance threshold.
 
-Audit logging, owner-scoped semantic retrieval, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
+Audit logging, guarded RAG answer generation, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
 
 ## Responsible Disclosure
 
