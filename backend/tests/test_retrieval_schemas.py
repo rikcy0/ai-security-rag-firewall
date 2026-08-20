@@ -5,9 +5,15 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from backend.app.schemas.retrieval import (MAX_RETRIEVAL_QUERY_CHARACTERS,
-    MAX_RETRIEVAL_TOP_K, RetrievedChunkResponse, SemanticSearchRequest,
-    SemanticSearchResponse)
+from backend.app.rag.constants import (
+    MAX_RETRIEVAL_QUERY_CHARACTERS,
+    MAX_RETRIEVAL_TOP_K,
+)
+from backend.app.schemas.retrieval import (
+    RetrievedChunkResponse,
+    SemanticSearchRequest,
+    SemanticSearchResponse,
+)
 
 
 def test_semantic_search_normalizes_query_and_defaults_top_k() -> None:
