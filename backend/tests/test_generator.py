@@ -1,13 +1,25 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
+from openai import OpenAIError
 from pydantic import ValidationError
 
+from backend.app.rag.constants import MAX_RETRIEVAL_QUERY_CHARACTERS
 from backend.app.rag.generator import (
+    GROUNDING_INSTRUCTIONS,
     AnswerContext,
+    AnswerProviderUnavailableError,
+    AnswerRefusedError,
     AnswerResponseInvalidError,
     GeneratedAnswer,
-    validate_generated_answer
+    OpenAIAnswerProvider,
+    validate_generated_answer,
 )
 
+MODEL = "gpt-5.6-luna"
+MAX_OUTPUT_TOKENS = 800
 
 def make_context(source_number: int = 1) -> AnswerContext:
     return AnswerContext(
@@ -15,6 +27,32 @@ def make_context(source_number: int = 1) -> AnswerContext:
         content="Store secrets outside the source code.",
     )
 
+def make_provider_response(
+    generated_answer: object = None,
+    *,
+    status: str = "completed",
+    refusal: bool = False,
+) -> SimpleNamespace:
+    output = []
+
+    if refusal:
+        output = [
+            SimpleNamespace(
+                type="message",
+                content=[
+                    SimpleNamespace(
+                        type="refusal",
+                        refusal="Refusal details must remain private",
+                    )
+                ],
+            )
+        ]
+
+    return SimpleNamespace(
+        status=status,
+        output=output,
+        output_parsed=generated_answer,
+    )
 
 def test_answer_context_accepts_minimal_provider_data() -> None:
     context = make_context()
@@ -244,4 +282,376 @@ def test_validation_requires_contexts() -> None:
         validate_generated_answer(
             generated,
             [],
+        )
+
+
+# core provider tests
+def test_openai_answer_provider_sends_minimized_structured_request() -> None:
+    client = Mock()
+
+    generated = GeneratedAnswer(
+        status="answered",
+        answer="Store secrets outside source code [1].",
+        cited_source_numbers=[1],
+    )
+
+    client.responses.parse.return_value = make_provider_response(generated)
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    result = provider.generate_answer(
+        "  How should secrets be stored?  ",
+        [make_context(1)],
+    )
+
+    assert result == generated
+
+    request = client.responses.parse.call_args.kwargs
+
+    assert request["model"] == MODEL
+    assert request["instructions"] == GROUNDING_INSTRUCTIONS
+    assert request["text_format"] is GeneratedAnswer
+    assert request["reasoning"] == {"effort": "none"}
+    assert request["max_output_tokens"] == MAX_OUTPUT_TOKENS
+    assert request["store"] is False
+
+    assert json.loads(request["input"]) == {
+        "query": "How should secrets be stored?",
+        "sources": [
+            {
+                "source_number": 1,
+                "content": "Store secrets outside the source code.",
+            }
+        ],
+    }
+
+
+def test_openai_answer_provider_strips_model_name() -> None:
+    client = Mock()
+
+    generated = GeneratedAnswer(
+        status="insufficient_context",
+        answer="",
+        cited_source_numbers=[],
+    )
+
+    client.responses.parse.return_value = make_provider_response(
+        generated
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=f"  {MODEL}  ",
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    provider.generate_answer(
+        "Question",
+        [make_context()],
+    )
+
+    assert (
+        client.responses.parse.call_args.kwargs["model"]
+        == MODEL
+    )
+
+
+@pytest.mark.parametrize("model", ["", "   "])
+def test_openai_answer_provider_rejects_empty_model(
+    model: str,
+) -> None:
+    with pytest.raises(ValueError, match="model must not be empty"):
+        OpenAIAnswerProvider(
+            client=Mock(),
+            model=model,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+        )
+
+
+@pytest.mark.parametrize("max_output_tokens", [0, -1])
+def test_openai_answer_provider_rejects_invalid_output_limit(
+    max_output_tokens: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="must be at least 16",
+    ):
+        OpenAIAnswerProvider(
+            client=Mock(),
+            model=MODEL,
+            max_output_tokens=max_output_tokens,
+        )
+
+
+def test_openai_answer_provider_rejects_empty_query() -> None:
+    client = Mock()
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(ValueError, match="query must not be empty"):
+        provider.generate_answer(
+            "   ",
+            [make_context()],
+        )
+
+    client.responses.parse.assert_not_called()
+
+
+def test_openai_answer_provider_rejects_oversized_query() -> None:
+    client = Mock()
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(ValueError, match="maximum length"):
+        provider.generate_answer(
+            "x" * (MAX_RETRIEVAL_QUERY_CHARACTERS + 1),
+            [make_context()],
+        )
+
+    client.responses.parse.assert_not_called()
+
+
+def test_openai_answer_provider_requires_contexts() -> None:
+    client = Mock()
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        provider.generate_answer("Question", [])
+
+    client.responses.parse.assert_not_called()
+
+
+def test_openai_answer_provider_rejects_duplicate_context_numbers() -> None:
+    client = Mock()
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(ValueError, match="must be unique"):
+        provider.generate_answer(
+            "Question",
+            [
+                make_context(1),
+                make_context(1),
+            ],
+        )
+
+    client.responses.parse.assert_not_called()
+
+
+# external-failure tests
+def test_openai_answer_provider_wraps_openai_errors() -> None:
+    client = Mock()
+    client.responses.parse.side_effect = OpenAIError(
+        "private provider details"
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerProviderUnavailableError,
+        match="request failed",
+    ) as exc_info:
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+    assert isinstance(exc_info.value.__cause__, OpenAIError)
+    assert "private provider details" not in str(exc_info.value)
+
+
+def test_openai_answer_provider_rejects_refusal() -> None:
+    client = Mock()
+    client.responses.parse.return_value = make_provider_response(
+        refusal=True
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerRefusedError,
+        match="refused",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+
+@pytest.mark.parametrize(
+    "response_status",
+    [
+        "queued",
+        "in_progress",
+        "incomplete",
+        "cancelled",
+    ],
+)
+def test_openai_answer_provider_rejects_incomplete_status(response_status: str) -> None:
+    client = Mock()
+    client.responses.parse.return_value = make_provider_response(
+        status=response_status
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerResponseInvalidError,
+        match="did not complete",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+
+def test_openai_answer_provider_translates_failed_status() -> None:
+    client = Mock()
+    client.responses.parse.return_value = make_provider_response(
+        status="failed"
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerProviderUnavailableError,
+        match="response failed",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+
+def test_openai_answer_provider_requires_parsed_output() -> None:
+    client = Mock()
+    client.responses.parse.return_value = make_provider_response()
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerResponseInvalidError,
+        match="no structured answer",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+
+def test_openai_answer_provider_rejects_invalid_parsed_output() -> None:
+    client = Mock()
+    client.responses.parse.return_value = make_provider_response(
+        {
+            "status": "answered",
+            "answer": "",
+            "cited_source_numbers": [],
+        }
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerResponseInvalidError,
+        match="invalid structured response",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context()],
+        )
+
+
+def test_openai_answer_provider_revalidates_citations() -> None:
+    client = Mock()
+
+    generated = GeneratedAnswer(
+        status="answered",
+        answer="Use the unavailable source [2].",
+        cited_source_numbers=[2],
+    )
+
+    client.responses.parse.return_value = make_provider_response(
+        generated
+    )
+
+    provider = OpenAIAnswerProvider(
+        client=client,
+        model=MODEL,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+
+    with pytest.raises(
+        AnswerResponseInvalidError,
+        match="unavailable source",
+    ):
+        provider.generate_answer(
+            "Question",
+            [make_context(1)],
+        )
+
+
+# missing citation test
+@pytest.mark.parametrize(
+    "invalid_citation",
+    ["[0]", "[01]"],
+)
+def test_validation_rejects_noncanonical_inline_citation(invalid_citation: str) -> None:
+    generated = GeneratedAnswer(
+        status="answered",
+        answer=f"Use the recommended control {invalid_citation}.",
+        cited_source_numbers=[1],
+    )
+
+    with pytest.raises(
+        AnswerResponseInvalidError,
+        match="invalid citation format",
+    ):
+        validate_generated_answer(
+            generated,
+            [make_context(1)],
         )
