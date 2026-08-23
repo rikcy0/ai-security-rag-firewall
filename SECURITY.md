@@ -24,7 +24,7 @@ Primary risks addressed:
 - Uploaded document text is screened for prompt-injection signals before chunking and persistence.
 - Only accepted document chunks cross the external embedding-provider boundary.
 - Embedding-provider responses are treated as untrusted input and validated before persistence.
-- Future answer-generation paths will reuse owner-scoped retrieval before sending context to an LLM.
+- Guarded answer generation reuses owner-scoped retrieval before sending minimal context to an external model.
 - Sensitive configuration values are stored in environment variables, not source code.
 
 ## Implemented Authentication Controls
@@ -223,6 +223,58 @@ Primary risks addressed:
 - Provider-specific error details are not returned to clients.
 - Automated tests prove that closer foreign-owned vectors cannot cross the ownership boundary.
 
+## Implemented Guarded RAG Answer Controls
+
+### Query validation and policy enforcement
+
+- `POST /rag/answer` requires an authenticated, active database user.
+- The request accepts only a query; extra fields such as `owner_id`, `top_k`, model names, or context limits are rejected.
+- Query length is bounded before and after minimal whitespace and line-ending normalization.
+- The prompt-injection detector analyzes the query before embedding generation, database retrieval, or answer generation.
+- Blocked queries receive a generic `422 Unprocessable Content` response that does not reveal detector scores, categories, or matched text.
+- Security-specific normalization remains internal to the detector; the minimally normalized query is used for embedding and generation.
+
+### Context isolation and minimization
+
+- RAG retrieval derives ownership exclusively from the authenticated database user's UUID.
+- PostgreSQL applies the owner condition before similarity ranking and limiting.
+- Retrieved chunks are materialized as immutable application data before the database read transaction is ended.
+- The database transaction is not held open while waiting for the external answer provider.
+- Answer-time context has an independent, server-controlled total character budget.
+- Context selection preserves whole chunks and skips blank or nonfitting chunks rather than splitting them.
+- Source numbers are assigned only after final context selection.
+- The answer provider receives only the query, source numbers, and selected chunk text.
+- UUIDs, filenames, ownership identifiers, similarity values, and embedding vectors are not sent to the answer model.
+
+### Answer-provider boundary
+
+- Application services depend on an answer-provider protocol rather than directly constructing an OpenAI client.
+- The current implementation uses the synchronous Responses API to match the synchronous FastAPI and SQLAlchemy architecture.
+- The generation model, output-token limit, provider timeout, and retry count are controlled by validated server settings.
+- Responses are requested with structured output, explicit reasoning effort, and `store=False`.
+- `store=False` prevents the response from being stored for later API retrieval; it should not be interpreted as a complete data-retention guarantee.
+- Grounding instructions require the model to treat both the query and sources as untrusted data, ignore instructions inside sources, and answer only from supplied context.
+- Provider clients are created lazily and closed after the request dependency finishes.
+
+### Output and citation validation
+
+- The provider validates completion status, refusals, structured output, answer length, and status-specific response requirements.
+- Answered results require at least one declared source citation.
+- Inline citation markers must use canonical positive source numbers.
+- Inline citations must exactly agree with the provider's declared citation list.
+- Every cited source number must exist in the server-supplied context.
+- Public source metadata is reconstructed from server-owned retrieval results rather than model-generated identifiers.
+- Only cited source metadata is returned to the client; chunk content, `owner_id`, and embeddings are excluded.
+
+### Failure containment and test evidence
+
+- Empty or over-budget retrieval context produces a fixed insufficient-context response without calling the answer provider.
+- Model-declared insufficient context produces the same fixed public response with an empty source list.
+- Model refusals, embedding failures, and answer-provider failures use generic public error messages.
+- Provider exception details, refusal text, request bodies, and raw model responses are not exposed to clients.
+- Automated tests use fake providers and therefore do not contact OpenAI or incur API charges.
+- PostgreSQL integration tests use a deliberately closer foreign-owned chunk and prove that it never reaches the answer provider.
+
 ## Current Limitations
 
 This is a local portfolio project and not a production identity platform.
@@ -266,8 +318,8 @@ The current prompt-injection detector is intentionally limited:
 - The current detector may miss encoded instructions, creative misspellings, typoglycemia, homoglyph substitution, fragmented instructions, and semantic paraphrases.
 - Current rule weights have not been statistically calibrated against a large adversarial and benign corpus.
 - At the default threshold, every current rule is individually strong enough to block.
-- The detector currently protects document ingestion but is not yet applied to semantic-search queries.
-- Semantic retrieval does not invoke an LLM, so retrieved content is not yet used for answer generation.
+- The detector protects document ingestion and guarded RAG queries, but it is not applied to the raw semantic-retrieval endpoint because that endpoint does not invoke an answer model.
+- Retrieved chunks are not currently rescanned immediately before answer generation; the system relies on ingestion-time screening, owner-scoped retrieval, minimal context disclosure, and grounding instructions.
 - Model-assisted classification, output screening, rate limiting, quarantine workflows, and human review are not implemented.
 - Prompt-injection detection is one defense layer and is not a guarantee that all attacks will be identified.
 
@@ -276,7 +328,7 @@ The current embedding implementation is intentionally limited:
 - Accepted document chunks are sent to an external embedding provider.
 - Data-loss prevention, sensitive-data redaction, and provider-specific retention controls are not implemented.
 - Only one concrete provider and one fixed embedding dimension are currently supported.
-- Automatic retries, exponential backoff, circuit breaking, caching, and quota management are not implemented.
+- Provider timeout and retry counts are configurable, but application-level exponential backoff, circuit breaking, caching, and quota management are not implemented.
 - Stored embeddings should be treated as potentially sensitive derived data.
 - Query text is sent to the configured external embedding provider.
 - Stored vectors and query vectors must use the same embedding model; changing models requires regenerating stored embeddings.
@@ -284,7 +336,18 @@ The current embedding implementation is intentionally limited:
 - The current shared vector index is appropriate for this local portfolio project but is not a complete large-scale tenant-isolation strategy.
 - Similarity scores have not been calibrated into a minimum relevance threshold.
 
-Audit logging, guarded RAG answer generation, query-time enforcement, contextual detection, and model-assisted security controls remain under development.
+The current guarded-answer implementation is intentionally limited:
+
+- There is no calibrated minimum similarity threshold, so nonempty retrieval does not necessarily mean that the chunks are relevant.
+- The answer model decides whether nonempty context is sufficient; the adversarial evaluation suite has not yet calibrated this behavior.
+- Structured output and citation validation prove that citations reference supplied sources, but do not prove that every generated claim is semantically supported by those sources.
+- Model output is not yet scanned by a separate content-policy or data-loss-prevention layer.
+- The answer provider receives selected document text through an external API, so sensitive or private documents should not be used.
+- `store=False` is a response-state control and is not presented as a general zero-retention guarantee.
+- The answer workflow is stateless and does not provide conversation history, streaming, tools, or stored model responses.
+- Security-event audit logging, per-user quotas, rate limiting, and provider circuit breaking are not implemented.
+
+Audit logging, contextual detection, model-assisted security controls, output screening, and the broader adversarial evaluation suite remain under development.
 
 ## Responsible Disclosure
 

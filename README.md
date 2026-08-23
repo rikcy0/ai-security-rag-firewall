@@ -1,6 +1,6 @@
 # AI Security RAG Firewall
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, and owner-scoped semantic retrieval. Planned stages will add guarded RAG question answering and security-event auditing.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, and guarded citation-backed RAG answers. Planned stages will add security-event auditing and broader adversarial evaluation.
 
 ## Overview
 
@@ -36,6 +36,24 @@ HNSW cosine-similarity search
 ranked owned chunks
 ```
 
+The implemented guarded-answer pipeline is:
+
+```text
+authenticated RAG query
+        ↓
+validation and prompt-injection screening
+        ↓
+query embedding and SQL-enforced owner filtering
+        ↓
+database read-transaction release
+        ↓
+whole-chunk context budgeting and source numbering
+        ↓
+structured grounded answer generation
+        ↓
+server-side citation validation and safe source mapping
+```
+
 Unlike a normal RAG chatbot, this project is designed to include security controls for:
 
 - Prompt injection detection
@@ -54,7 +72,7 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Pydantic
 - PostgreSQL 16
 - pgvector
-- OpenAI Python SDK and Embeddings API
+- OpenAI Python SDK, Embeddings API, and Responses API
 - SQLAlchemy
 - Alembic
 - pwdlib with Argon2
@@ -117,11 +135,22 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Safe retrieval responses containing approved chunk and source fields only
 - Cross-user isolation tests using deliberately closer foreign vectors
 - End-to-end tests covering upload, embedding, storage, query embedding, and retrieval
+- Authenticated and stateless `POST /rag/answer` endpoint
+- Query-time prompt-injection screening before embedding, retrieval, or answer generation
+- Server-controlled retrieval, context, and answer-token limits
+- Whole-chunk context selection without partial chunk splitting
+- Database read-transaction release before the answer-provider request
+- Application-defined answer-provider boundary using structural typing
+- Structured OpenAI Responses API output with `store=False` and explicit reasoning effort
+- Minimal model context containing only source numbers and chunk text
+- Provider-side validation of response status, refusals, structured output, and citations
+- Server-owned mapping from cited source numbers to safe source metadata
+- Deterministic insufficient-context responses that skip answer generation when no context fits
+- Generic public failures that do not expose provider or detector details
+- Integration tests proving foreign-owned chunks never reach the answer provider
 
 ## Roadmap
 
-- Guarded RAG query and answer generation
-- Query-time prompt-injection enforcement
 - Contextual and model-assisted prompt-injection defenses
 - Security event logs
 - Admin dashboard
@@ -170,8 +199,14 @@ Current capabilities include:
 - SQL ownership filtering before `top_k`
 - Cosine-similarity scores and source-aware chunk responses
 - Strict HNSW iterative scanning for owner-filtered searches
+- Guarded, citation-backed RAG answers through the Responses API
+- Fail-fast prompt-injection enforcement for RAG queries
+- Bounded, minimally disclosed context sent to the answer provider
+- Structured answer and citation validation
+- Server-controlled source metadata for cited chunks only
+- Deterministic insufficient-context behavior
 
-Document ingestion, text chunking, ingestion-time prompt-injection screening, embedding generation, pgvector-backed chunk indexing, and owner-scoped semantic retrieval are implemented. Guarded RAG answer generation, query-time prompt-injection enforcement, contextual detection, model-assisted defenses, and security-event auditing remain under development.
+Document ingestion, text chunking, ingestion-time prompt-injection screening, embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, and guarded RAG answer generation are implemented. Contextual detection, model-assisted defenses, security-event auditing, and the broader adversarial test suite remain under development.
 
 ## Local Development
 
@@ -200,16 +235,22 @@ RAG_FIREWALL_SECRET_KEY=your-generated-secret
 RAG_FIREWALL_ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
 
-Configure the embedding provider before uploading documents:
+Configure the OpenAI-backed embedding and answer providers before uploading documents or generating RAG answers:
 
 ```env
 RAG_FIREWALL_OPENAI_API_KEY=your-api-key-here
 RAG_FIREWALL_EMBEDDING_MODEL=text-embedding-3-small
+RAG_FIREWALL_GENERATION_MODEL=gpt-5.6-luna
+RAG_FIREWALL_OPENAI_TIMEOUT_SECONDS=30
+RAG_FIREWALL_OPENAI_MAX_RETRIES=1
+RAG_FIREWALL_RAG_ANSWER_TOP_K=5
+RAG_FIREWALL_RAG_MAX_CONTEXT_CHARACTERS=20000
+RAG_FIREWALL_RAG_MAX_OUTPUT_TOKENS=800
 ```
 
-The API key is optional during application startup so non-embedding functionality can still run locally. Document uploads and semantic searches return `503 Service Unavailable` when the embedding provider is not configured.
+The API key is optional during application startup so functionality that does not use OpenAI can still run locally. Document uploads, semantic searches, and guarded RAG answers return `503 Service Unavailable` when their required provider is not configured.
 
-Accepted document chunks are sent to the configured embedding provider. Do not upload sensitive or private material, and remember that real embedding requests may incur provider charges.
+Accepted document chunks and search queries are sent to the configured embedding provider. Guarded answer requests also send the validated query and selected chunk text to the configured answer provider. Do not upload sensitive or private material, and remember that real provider requests may incur charges.
 
 The included database credentials are intended only for local development. Never commit `.env` or use the development credentials in production.
 
@@ -368,7 +409,56 @@ An owner with no stored chunks receives:
 }
 ```
 
-Semantic retrieval embeds and ranks the query but does not invoke a chat model or generate an answer. Query-time prompt-injection enforcement and guarded answer generation belong to the next checkpoint.
+Semantic retrieval embeds and ranks the query but does not invoke an answer model or generate an answer. Use the guarded RAG endpoint when a citation-backed answer is required.
+
+### Guarded RAG answer endpoint
+
+| Method | Endpoint | Purpose | Required access |
+| --- | --- | --- | --- |
+| `POST` | `/rag/answer` | Generate a guarded, citation-backed answer from the current user's documents | Authenticated user |
+
+Example request:
+
+```json
+{
+  "query": "How should API keys be stored?"
+}
+```
+
+Example answered response:
+
+```json
+{
+  "status": "answered",
+  "answer": "API keys should be stored in environment variables [1].",
+  "sources": [
+    {
+      "source_number": 1,
+      "chunk_id": "00000000-0000-0000-0000-000000000000",
+      "document_id": "00000000-0000-0000-0000-000000000000",
+      "filename": "security-notes.md",
+      "chunk_index": 2,
+      "similarity": 0.91
+    }
+  ]
+}
+```
+
+The client supplies only the query. Retrieval count, owner identity, context budget, model, and output-token limit remain under server control. The query is screened for prompt injection before embedding or document retrieval, and ownership is enforced inside the retrieval query before ranking and limiting.
+
+Only a minimal context containing source numbers and chunk text is sent to the answer provider. UUIDs, filenames, ownership identifiers, similarity values, and embedding vectors remain under server control. The response returns metadata for cited sources only; it does not expose chunk content, ownership identifiers, or embeddings.
+
+If no usable context is available, or the model reports that the supplied context is insufficient, the endpoint returns the same deterministic response:
+
+```json
+{
+  "status": "insufficient_context",
+  "answer": "I could not find information in your documents to answer that question.",
+  "sources": []
+}
+```
+
+When no context fits the server-controlled budget, the answer provider is not called. Prompt-injection, refusal, embedding-provider, and answer-provider failures use generic public messages rather than exposing internal scores or upstream details.
 
 ### Run tests
 
@@ -392,7 +482,7 @@ Run the complete suite:
 python -m pytest backend/tests -v
 ```
 
-Automated tests use deterministic fake embedding providers. Running the test suite does not make OpenAI API requests or incur embedding charges.
+Automated tests use deterministic fake embedding and answer providers. Running the test suite does not make OpenAI API requests or incur provider charges.
 
 ### Stop PostgreSQL
 
