@@ -10,6 +10,6 @@ pwdlib[argon2]
 PyJWT
 python-multipart
 pytest
-httpx2
+httpx
 openai
 pgvector

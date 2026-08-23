@@ -4,13 +4,14 @@ from backend.app.routes.auth_routes import router as auth_router
 from backend.app.routes.admin_routes import router as admin_router
 from backend.app.routes.document_routes import router as document_router
 from backend.app.routes.retrieval_routes import router as retrieval_router
+from backend.app.routes.rag_routes import router as rag_router
 
 app = FastAPI(
     title="AI Security RAG Firewall",
     description=(
     "Security-focused RAG backend with authentication, RBAC, "
     "owner-scoped document ingestion, prompt-injection "
-    "screening, and semantic retrieval."
+    "screening, semantic retrieval, and guarded grounded answering."
     ),
     version="0.1.0",
 )
@@ -20,6 +21,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(document_router)
 app.include_router(retrieval_router)
+app.include_router(rag_router)
 
 
 @app.get("/")

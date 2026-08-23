@@ -265,3 +265,95 @@ def test_embedding_model_rejects_invalid_values(monkeypatch, invalid_model: str)
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+# Guarded RAG answer configuration
+
+def test_rag_answer_settings_have_bounded_defaults(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.generation_model == "gpt-5.6-luna"
+    assert settings.rag_answer_top_k == 5
+    assert settings.rag_max_context_characters == 20_000
+    assert settings.rag_max_output_tokens == 800
+    assert settings.openai_timeout_seconds == 30.0
+    assert settings.openai_max_retries == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_model",
+    [
+        "",
+        " ",
+        "model name with spaces",
+        "x" * 101,
+    ],
+)
+def test_generation_model_rejects_invalid_values(monkeypatch, invalid_model: str) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_GENERATION_MODEL",
+        invalid_model
+    )
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("environment_variable", "invalid_value"),
+    [
+        ("RAG_FIREWALL_RAG_ANSWER_TOP_K", "0"),
+        ("RAG_FIREWALL_RAG_ANSWER_TOP_K", "21"),
+        ("RAG_FIREWALL_RAG_MAX_CONTEXT_CHARACTERS", "0"),
+        ("RAG_FIREWALL_RAG_MAX_CONTEXT_CHARACTERS", "100001"),
+        ("RAG_FIREWALL_RAG_MAX_OUTPUT_TOKENS", "0"),
+        ("RAG_FIREWALL_RAG_MAX_OUTPUT_TOKENS", "4001"),
+        ("RAG_FIREWALL_OPENAI_TIMEOUT_SECONDS", "0"),
+        ("RAG_FIREWALL_OPENAI_TIMEOUT_SECONDS", "301"),
+        ("RAG_FIREWALL_OPENAI_MAX_RETRIES", "-1"),
+        ("RAG_FIREWALL_OPENAI_MAX_RETRIES", "6"),
+    ],
+)
+def test_rag_answer_settings_reject_out_of_range_values(
+    monkeypatch,
+    environment_variable: str,
+    invalid_value: str
+) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.setenv(environment_variable, invalid_value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_rag_context_budget_must_hold_one_configured_chunk(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RAG_FIREWALL_DATABASE_URL",
+        "postgresql+psycopg2://user:password@localhost/test_database"
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_CHUNK_SIZE_CHARACTERS",
+        "1000"
+    )
+    monkeypatch.setenv(
+        "RAG_FIREWALL_RAG_MAX_CONTEXT_CHARACTERS",
+        "999"
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="RAG context limit must be at least as large as chunk size"
+    ):
+        Settings(_env_file=None)

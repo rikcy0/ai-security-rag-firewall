@@ -1,10 +1,10 @@
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from backend.app.rag.retriever import (
+from backend.app.rag.constants import (
     DEFAULT_RETRIEVAL_TOP_K,
     MAX_RETRIEVAL_QUERY_CHARACTERS,
-    MAX_RETRIEVAL_TOP_K,
+    MAX_RETRIEVAL_TOP_K
 )
 
 

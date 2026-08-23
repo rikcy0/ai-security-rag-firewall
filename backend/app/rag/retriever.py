@@ -6,11 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import Document, DocumentChunk
 from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider
-
-
-DEFAULT_RETRIEVAL_TOP_K = 5
-MAX_RETRIEVAL_TOP_K = 20
-MAX_RETRIEVAL_QUERY_CHARACTERS = 2_000
+from backend.app.rag.constants import MAX_RETRIEVAL_QUERY_CHARACTERS, MAX_RETRIEVAL_TOP_K
 
 
 # instances are immutable after construction

@@ -11,9 +11,11 @@ from backend.app.rag.embeddings import (
     EmbeddingGenerationError,
     EmbeddingProvider
 )
-from backend.app.rag.retriever import (
+from backend.app.rag.constants import (
     MAX_RETRIEVAL_QUERY_CHARACTERS,
     MAX_RETRIEVAL_TOP_K,
+)
+from backend.app.rag.retriever import (
     RetrievedChunk,
     retrieve_chunks_for_owner
 )
