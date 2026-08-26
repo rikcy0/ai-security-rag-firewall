@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.db.database import SessionLocal
-from backend.app.db.models import User, UserRole
+from backend.app.db.models import SecurityEvent, User, UserRole
 from backend.app.security.passwords import verify_password
 from backend.app.security.tokens import ALGORITHM, decode_access_token
 from backend.app.config import get_settings
@@ -21,10 +21,21 @@ TEST_PASSWORD = "integration-test-password"
 @pytest.fixture
 def unique_username() -> Iterator[str]:
     username = f"test-{uuid4().hex}" # each test is unique
+    unknown_username = f"unknown-{username}"
 
     yield username
 
     with SessionLocal() as database_session:
+        database_session.execute(
+            delete(SecurityEvent).where(
+                SecurityEvent.actor_username.in_(
+                    [
+                        username,
+                        unknown_username,
+                    ]
+                )
+            )
+        )
         database_session.execute(delete(User).where(User.username == username))
         database_session.commit()
 
@@ -144,7 +155,7 @@ def test_wrong_password_and_unknown_username_have_same_response(client: TestClie
         },
     )
 
-    unknown_username = f"unknown-{uuid4().hex}"
+    unknown_username = f"unknown-{unique_username}"
 
     unknown_user_response = client.post(
         "/auth/login",

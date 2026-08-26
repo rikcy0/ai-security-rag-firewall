@@ -20,7 +20,7 @@ Primary risks addressed:
 - The LLM will not be trusted to make access-control decisions.
 - Document ownership is enforced before stored content can be accessed.
 - Semantic retrieval filters by the authenticated owner inside PostgreSQL before ranking and limiting results.
-- Planned security-event logging will support monitoring and auditing.
+- Selected security-sensitive failures are recorded as data-minimized PostgreSQL audit events.
 - Uploaded document text is screened for prompt-injection signals before chunking and persistence.
 - Only accepted document chunks cross the external embedding-provider boundary.
 - Embedding-provider responses are treated as untrusted input and validated before persistence.
@@ -148,7 +148,7 @@ Primary risks addressed:
 - Content meeting the configured threshold is rejected before chunking and persistence.
 - Rejected uploads receive `422 Unprocessable Content`.
 - Public responses do not reveal scores, categories, reasons, or matching content.
-- Internal detector results remain available for future security-event logging.
+- Blocked document uploads and RAG queries create security events containing only the surface, risk score, and sorted matched categories.
 - PostgreSQL integration tests verify that rejected uploads create neither document nor chunk rows.
 
 ## Implemented Embedding Security Controls
@@ -275,6 +275,37 @@ Primary risks addressed:
 - Automated tests use fake providers and therefore do not contact OpenAI or incur API charges.
 - PostgreSQL integration tests use a deliberately closer foreign-owned chunk and prove that it never reaches the answer provider.
 
+## Implemented Security-Event Audit Controls
+
+### Recorded events
+
+- Failed login attempts create `login_failed` events.
+- Role-check failures create `authorization_denied` events.
+- Blocked document uploads and RAG queries create `prompt_injection_blocked` events.
+- Event types are restricted by a PostgreSQL check constraint.
+
+### Data minimization
+
+- Failed-login events store the normalized submitted username without claiming that the account exists.
+- Authorization-denial events store the actor identity and required and actual roles.
+- Prompt-injection events store the protected surface, deterministic risk score, and sorted matched categories.
+- Events do not store passwords, password hashes, access tokens, uploaded document content, RAG query text, embeddings, or provider responses.
+
+### Persistence and failure behavior
+
+- Audit events are written using a separate database session and transaction.
+- An audit persistence failure cannot reverse or weaken the original authentication, authorization, or prompt-injection decision.
+- Audit failures write only the exception type to the application logger.
+- Deleting a user sets the event's user UUID to null while preserving the username snapshot and event history.
+
+### Administrative review
+
+- `GET /admin/security-events` requires the current database user to have the `admin` role.
+- Results are ordered newest first using creation time and event UUID.
+- The result limit defaults to 50 and is bounded between 1 and 100.
+- Responses use an explicit schema containing only approved event fields.
+
+
 ## Current Limitations
 
 This is a local portfolio project and not a production identity platform.
@@ -298,7 +329,6 @@ The current authorization model is intentionally limited:
 - Administrative role changes require direct access to the local development database.
 - There is no administrative role-management API.
 - Granular permissions and role hierarchies are not implemented.
-- Authorization decisions are not yet recorded in an audit log.
 
 The current document-security implementation is intentionally limited:
 
@@ -345,9 +375,17 @@ The current guarded-answer implementation is intentionally limited:
 - The answer provider receives selected document text through an external API, so sensitive or private documents should not be used.
 - `store=False` is a response-state control and is not presented as a general zero-retention guarantee.
 - The answer workflow is stateless and does not provide conversation history, streaming, tools, or stored model responses.
-- Security-event audit logging, per-user quotas, rate limiting, and provider circuit breaking are not implemented.
+- Audit coverage is intentionally limited to selected security failures; per-user quotas, rate limiting, and provider circuit breaking are not implemented.
 
-Audit logging, contextual detection, model-assisted security controls, output screening, and the broader adversarial evaluation suite remain under development.
+The current audit implementation is intentionally limited:
+
+- Only failed logins, authorization denials, and blocked prompt-injection attempts are recorded.
+- Successful authentication, document access, retrieval, and answer generation are not audited.
+- There is no retention policy, export system, alerting pipeline, dashboard, or tamper-evident storage.
+- Audit persistence is best-effort so logging failures do not alter the original security decision.
+- The administrative endpoint provides manual review rather than real-time monitoring.
+
+Contextual detection, model-assisted security controls, output screening, automated alerting, and the broader adversarial evaluation suite remain under development.
 
 ## Responsible Disclosure
 

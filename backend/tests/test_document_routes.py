@@ -468,11 +468,17 @@ def test_prompt_injection_rejection_returns_generic_response(
     document_creator = Mock(
         side_effect=PromptInjectionDetectedError(detector_result)
     )
+    audit_recorder = Mock()
 
     monkeypatch.setattr(
         document_routes,
         "create_document",
         document_creator,
+    )
+    monkeypatch.setattr(
+        document_routes,
+        "record_prompt_injection_block",
+        audit_recorder,
     )
 
     response = client.post(
@@ -494,6 +500,13 @@ def test_prompt_injection_rejection_returns_generic_response(
     assert "instruction_override" not in response_text
     assert "instruction override attempt" not in response_text
     assert "70" not in response_text
+
+    audit_recorder.assert_called_once_with(
+        actor_user_id=authenticated_user.id,
+        actor_username=authenticated_user.username,
+        surface="document_upload",
+        result=detector_result,
+    )
 
 
 def test_upload_rejects_missing_embedding_configuration(

@@ -1,7 +1,10 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 from pgvector.sqlalchemy import VECTOR
+from sqlalchemy.dialects.postgresql import JSONB
 
-from backend.app.db.models import Document, DocumentChunk, User, UserRole
+from backend.app.db.models import (
+    Document, DocumentChunk, User, UserRole,
+    SecurityEvent, SecurityEventType)
 from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS
 
 def test_user_model_has_only_expected_columns() -> None:
@@ -177,3 +180,75 @@ def test_document_chunk_has_hnsw_cosine_index() -> None:
 
     assert postgresql_options["using"] == "hnsw"
     assert postgresql_options["ops"] == {"embedding": "vector_cosine_ops"}
+
+
+def test_security_event_type_values_are_closed() -> None:
+    assert {
+        event_type.value
+        for event_type in SecurityEventType
+    } == {
+        "login_failed",
+        "authorization_denied",
+        "prompt_injection_blocked",
+    }
+
+
+def test_security_event_model_has_expected_columns() -> None:
+    assert set(SecurityEvent.__table__.columns.keys()) == {
+        "id",
+        "event_type",
+        "actor_user_id",
+        "actor_username",
+        "details",
+        "created_at",
+    }
+
+
+def test_security_event_actor_is_optional_and_survives_user_deletion() -> None:
+    actor_column = SecurityEvent.__table__.columns[
+        "actor_user_id"
+    ]
+
+    assert actor_column.nullable is True
+
+    foreign_keys = list(actor_column.foreign_keys)
+
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0].target_fullname == "users.id"
+    assert foreign_keys[0].ondelete == "SET NULL"
+
+
+def test_security_event_details_are_required_jsonb_objects() -> None:
+    details_column = SecurityEvent.__table__.columns[
+        "details"
+    ]
+
+    assert isinstance(details_column.type, JSONB)
+    assert details_column.nullable is False
+    assert details_column.default is not None
+    assert details_column.server_default is not None
+
+    constraint_names = {
+        constraint.name
+        for constraint in SecurityEvent.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert "ck_security_events_event_type" in constraint_names
+    assert "ck_security_events_details_object" in constraint_names
+
+
+def test_security_event_has_deterministic_ordering_index() -> None:
+    ordering_index = next(
+        index
+        for index in SecurityEvent.__table__.indexes
+        if index.name == "ix_security_events_created_at_id"
+    )
+
+    assert tuple(
+        column.name
+        for column in ordering_index.columns
+    ) == (
+        "created_at",
+        "id",
+    )

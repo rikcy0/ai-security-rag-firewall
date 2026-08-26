@@ -135,12 +135,9 @@ def test_register_rejects_invalid_request_before_service_call(client, database_s
 def test_login_returns_bearer_access_token(client, database_session, monkeypatch) -> None:
     database_user = make_database_user()
 
-    authentication_service = Mock(
-        return_value=database_user
-    )
-    token_creator = Mock(
-        return_value="signed-access-token"
-    )
+    authentication_service = Mock(return_value=database_user)
+    token_creator = Mock(return_value="signed-access-token")
+    audit_recorder = Mock()
 
     monkeypatch.setattr(
         auth_routes,
@@ -151,6 +148,12 @@ def test_login_returns_bearer_access_token(client, database_session, monkeypatch
         auth_routes,
         "create_access_token",
         token_creator
+    )
+
+    monkeypatch.setattr(
+        auth_routes,
+        "record_failed_login",
+        audit_recorder,
     )
 
     response = client.post(
@@ -175,9 +178,9 @@ def test_login_returns_bearer_access_token(client, database_session, monkeypatch
     assert credentials.username == "alice"
     assert (credentials.password.get_secret_value() == PLAINTEXT_PASSWORD)
 
-    token_creator.assert_called_once_with(
-        database_user.id
-    )
+    token_creator.assert_called_once_with(database_user.id)
+
+    audit_recorder.assert_not_called()
 
 
 def test_login_returns_generic_unauthorized_response(client, database_session, monkeypatch) -> None:
@@ -187,6 +190,7 @@ def test_login_returns_generic_unauthorized_response(client, database_session, m
         )
     )
     token_creator = Mock()
+    audit_recorder = Mock()
 
     monkeypatch.setattr(
         auth_routes,
@@ -197,6 +201,11 @@ def test_login_returns_generic_unauthorized_response(client, database_session, m
         auth_routes,
         "create_access_token",
         token_creator
+    )
+    monkeypatch.setattr(
+        auth_routes,
+        "record_failed_login",
+        audit_recorder,
     )
 
     response = client.post(
@@ -212,6 +221,8 @@ def test_login_returns_generic_unauthorized_response(client, database_session, m
     assert response.headers["www-authenticate"] == "Bearer"
 
     token_creator.assert_not_called()
+
+    audit_recorder.assert_called_once_with(actor_username="alice")
 
 
 def test_login_rejects_invalid_form_before_authentication(client, database_session, monkeypatch) -> None:

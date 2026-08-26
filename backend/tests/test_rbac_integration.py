@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from backend.app.db.database import SessionLocal
-from backend.app.db.models import User, UserRole
+from backend.app.db.models import SecurityEvent, User, UserRole
 
 
 TEST_PASSWORD = "integration-test-password"
@@ -21,6 +21,16 @@ def rbac_usernames() -> Iterator[tuple[str, str]]:
     yield admin_username, ordinary_username
 
     with SessionLocal() as database_session:
+        database_session.execute(
+            delete(SecurityEvent).where(
+                SecurityEvent.actor_username.in_(
+                    [
+                        admin_username,
+                        ordinary_username,
+                    ]
+                )
+            )
+        )
         database_session.execute(
             delete(User).where(
                 User.username.in_(

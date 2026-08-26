@@ -9,13 +9,14 @@ from backend.app.services.auth import InvalidCredentialsError, UsernameAlreadyEx
 from backend.app.security.tokens import create_access_token
 from backend.app.security.authentication import get_current_user
 from backend.app.db.models import User
-
+from backend.app.services.security_events import record_failed_login
 
 
 router = APIRouter(
     prefix="/auth",
     tags=["authentication"]
 )
+
 
 @router.post(
     "/register",
@@ -46,6 +47,9 @@ def login(
     try:
         user = authenticate_user(database_session, credentials)
     except InvalidCredentialsError as exc:
+        record_failed_login(
+            actor_username=credentials.username
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

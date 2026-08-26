@@ -1,6 +1,6 @@
 # AI Security RAG Firewall
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, and guarded citation-backed RAG answers. Planned stages will add security-event auditing and broader adversarial evaluation.
+AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, guarded citation-backed RAG answers, and persistent security-event audit logging. Planned stages will add broader adversarial evaluation and more advanced security controls.
 
 ## Overview
 
@@ -148,11 +148,17 @@ Unlike a normal RAG chatbot, this project is designed to include security contro
 - Deterministic insufficient-context responses that skip answer generation when no context fits
 - Generic public failures that do not expose provider or detector details
 - Integration tests proving foreign-owned chunks never reach the answer provider
+- PostgreSQL-backed security-event audit logging
+- Audit events for failed logins, authorization denials, and blocked prompt-injection attempts
+- Data-minimized event details that exclude passwords, tokens, document text, and query text
+- Isolated audit transactions that cannot change the original security decision
+- Admin-only security-event listing with bounded, newest-first results
+- Database constraints for supported event types and JSON-object details
+- Integration tests proving security events persist and remain reviewable
 
 ## Roadmap
 
 - Contextual and model-assisted prompt-injection defenses
-- Security event logs
 - Admin dashboard
 - Adversarial test suite
 - More advanced token-aware and structure-aware chunking
@@ -205,8 +211,14 @@ Current capabilities include:
 - Structured answer and citation validation
 - Server-controlled source metadata for cited chunks only
 - Deterministic insufficient-context behavior
+- Persistent audit events for selected security-sensitive failures
+- Failed-login logging without revealing whether an account exists
+- Authorization-denial logging with required and actual roles
+- Prompt-injection block logging for document uploads and RAG queries
+- Admin-only, bounded security-event review
 
-Document ingestion, text chunking, ingestion-time prompt-injection screening, embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, and guarded RAG answer generation are implemented. Contextual detection, model-assisted defenses, security-event auditing, and the broader adversarial test suite remain under development.
+Document ingestion, text chunking, prompt-injection screening, embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, guarded RAG answer generation, and selected security-event audit logging are implemented. Contextual detection, model-assisted defenses, automated monitoring, and the broader adversarial test suite remain under development.
+
 
 ## Local Development
 
@@ -319,6 +331,9 @@ Open:
 | `POST` | `/auth/login` | Authenticate and receive an access token | Public |
 | `GET` | `/auth/me` | Return the current authenticated user | Authenticated user |
 | `GET` | `/admin/users` | Return a safe list of registered users | Administrator |
+| `GET` | `/admin/security-events` | Return a bounded, newest-first list of security events | Administrator |
+
+The security-event endpoint returns 50 events by default and accepts a server-bounded `limit` between 1 and 100. Recorded events contain derived security evidence rather than raw credentials, access tokens, uploaded document content, or submitted RAG queries.
 
 New accounts always receive the `user` role. Registration requests cannot assign the `admin` role.
 
