@@ -15,6 +15,7 @@ from backend.app.services.documents import (
     UnsupportedDocumentTypeError, create_document, get_document_for_owner, list_documents_for_owner)
 from backend.app.rag.embeddings import EmbeddingGenerationError, EmbeddingProvider
 from backend.app.routes.dependencies import EMBEDDING_SERVICE_UNAVAILABLE_DETAIL, get_embedding_provider
+from backend.app.services.security_events import record_prompt_injection_block
 
 
 router = APIRouter(
@@ -56,6 +57,12 @@ def upload_document(
             embedding_provider=embedding_provider
         )
     except PromptInjectionDetectedError as exc:
+        record_prompt_injection_block(
+            actor_user_id=current_user.id,
+            actor_username=current_user.username,
+            surface="document_upload",
+            result=exc.result
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc)

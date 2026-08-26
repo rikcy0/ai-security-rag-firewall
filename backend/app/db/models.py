@@ -1,11 +1,11 @@
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint, func, true)
-from sqlalchemy.dialects.postgresql import UUID
+    String, Text, UniqueConstraint, func, text, true)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from pgvector.sqlalchemy import VECTOR
@@ -17,6 +17,12 @@ from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"
+
+
+class SecurityEventType(StrEnum):
+    LOGIN_FAILED = "login_failed"
+    AUTHORIZATION_DENIED = "authorization_denied"
+    PROMPT_INJECTION_BLOCKED = "prompt_injection_blocked"
 
 
 class User(Base):
@@ -161,3 +167,69 @@ class DocumentChunk(Base):
         VECTOR(EMBEDDING_DIMENSIONS),
         nullable=False
     )
+
+
+class SecurityEvent(Base):
+    __tablename__ = "security_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ("
+            "'login_failed', "
+            "'authorization_denied', "
+            "'prompt_injection_blocked'"
+            ")",
+            name="ck_security_events_event_type"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(details) = 'object'",
+            name="ck_security_events_details_object"
+        ),
+        Index(
+            "ix_security_events_created_at_id",
+            "created_at",
+            "id"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    event_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False
+    )
+
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL"
+        ),
+        nullable=True
+    )
+
+    actor_username: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True
+    )
+
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+# Note:
+# actor_user_id is nullable because failed login attempts are unauthenticated
+# SET NULL for ondelete preserves events even after user deletion
+# actor_username = readable historical snapshot

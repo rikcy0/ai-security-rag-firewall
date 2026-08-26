@@ -14,6 +14,7 @@ from backend.app.routes.dependencies import (
 from backend.app.schemas.rag import RAGAnswerRequest, RAGAnswerResponse
 from backend.app.security.authentication import get_current_user
 from backend.app.services.rag import RAGPromptInjectionDetectedError, answer_query_for_owner
+from backend.app.services.security_events import record_prompt_injection_block
 
 
 RAG_QUERY_REJECTED_DETAIL = "Query rejected by security policy"
@@ -52,6 +53,12 @@ def answer_rag_query(
             prompt_injection_block_threshold=settings.prompt_injection_block_threshold
         )
     except RAGPromptInjectionDetectedError as exc:
+        record_prompt_injection_block(
+            actor_user_id=current_user.id,
+            actor_username=current_user.username,
+            surface="rag_query",
+            result=exc.result
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=RAG_QUERY_REJECTED_DETAIL

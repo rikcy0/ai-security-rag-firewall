@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from backend.app.db.database import SessionLocal
-from backend.app.db.models import Document, DocumentChunk, User
+from backend.app.db.models import Document, DocumentChunk, SecurityEvent, User
 from backend.app.routes import document_routes
 from backend.app.main import app
 from backend.app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
@@ -24,6 +24,11 @@ def upload_username() -> Iterator[str]:
     yield username
 
     with SessionLocal() as database_session:
+        database_session.execute(
+            delete(SecurityEvent).where(
+                SecurityEvent.actor_username == username
+            )
+        )
         database_session.execute(
             delete(User).where(
                 User.username == username

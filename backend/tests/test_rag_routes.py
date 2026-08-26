@@ -270,10 +270,17 @@ def test_rag_answer_translates_prompt_injection_rejection(
         )
     )
 
+    audit_recorder = Mock()
+
     monkeypatch.setattr(
         rag_routes,
         "answer_query_for_owner",
         answer_service,
+    )
+    monkeypatch.setattr(
+        rag_routes,
+        "record_prompt_injection_block",
+        audit_recorder,
     )
 
     response = client.post(
@@ -286,6 +293,13 @@ def test_rag_answer_translates_prompt_injection_rejection(
         "detail": "Query rejected by security policy"
     }
     assert private_reason not in response.text
+
+    audit_recorder.assert_called_once_with(
+        actor_user_id=authenticated_user.id,
+        actor_username=authenticated_user.username,
+        surface="rag_query",
+        result=detection_result,
+    )
 
 
 def test_rag_answer_translates_embedding_failure(
