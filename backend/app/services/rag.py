@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.rag.constants import MAX_RETRIEVAL_QUERY_CHARACTERS
 from backend.app.rag.embeddings import EmbeddingProvider
-from backend.app.rag.generator import AnswerContext, AnswerProvider
+from backend.app.rag.generator import AnswerContext, AnswerProvider, validate_generated_answer
 from backend.app.rag.retriever import RetrievedChunk, retrieve_chunks_for_owner
 from backend.app.schemas.rag import RAG_INSUFFICIENT_CONTEXT_ANSWER, RAGAnswerResponse, RAGSourceResponse
 from backend.app.security.prompt_injection import PromptInjectionDecision, PromptInjectionResult, analyze_prompt_injection
@@ -139,6 +139,11 @@ def answer_query_for_owner(
     generated_answer = answer_provider.generate_answer(
         normalized_query,
         answer_contexts
+    )
+    # Enforce citation rules regardless of the provider implementation
+    generated_answer = validate_generated_answer(
+        generated_answer,
+        answer_contexts,
     )
     if generated_answer.status == "insufficient_context":
         return _build_insufficient_context_response()
