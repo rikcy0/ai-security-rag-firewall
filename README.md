@@ -1,26 +1,34 @@
 # AI Security RAG Firewall
 
-AI Security RAG Firewall is a full-stack AI security project under active development. Its current backend supports authenticated users, role-based authorization, owner-isolated document ingestion, deterministic prompt-injection screening, OpenAI embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, guarded citation-backed RAG answers, and persistent security-event audit logging. Planned stages will add broader adversarial evaluation and more advanced security controls.
+AI Security RAG Firewall is a security-focused RAG backend with authenticated document uploads, owner-isolated semantic retrieval, citation-backed answers, and adversarial evaluation.
 
 ## Overview
 
-The implemented document-ingestion pipeline is:
+### Document ingestion
+
+`POST /documents` turns an authenticated upload into searchable, owner-linked chunks:
 
 ```text
 authenticated upload
         ↓
-file and UTF-8 validation
+bounded file read, filename and UTF-8 validation
         ↓
 prompt-injection screening
         ↓
 overlapping text chunking
         ↓
-embedding generation
+batched embedding generation and vector validation
         ↓
-PostgreSQL and pgvector persistence
+atomic document, chunk and pgvector persistence
+        ↓
+approved document metadata response
 ```
 
-The implemented semantic-retrieval pipeline is:
+Blocked content never reaches chunking or embedding. Embedding failures leave no partial upload records; database failures roll back the document operation.
+
+### Owner-scoped semantic retrieval
+
+`POST /retrieval/search` finds matching chunks without generating an answer:
 
 ```text
 authenticated query
@@ -31,194 +39,62 @@ query embedding
         ↓
 SQL-enforced owner filtering
         ↓
-HNSW cosine-similarity search
+HNSW cosine-similarity ranking and top-k limit
         ↓
-ranked owned chunks
+ranked owned chunks with approved source metadata
 ```
 
-The implemented guarded-answer pipeline is:
+Ownership is enforced before ranking and limiting, including for administrators. This endpoint returns chunk text but not owner IDs or embeddings; unlike `/rag/answer`, it does not run query-time prompt-injection screening.
+
+### Guarded RAG answers
+
+`POST /rag/answer` combines query screening, owner-scoped retrieval, and citation-backed generation:
 
 ```text
 authenticated RAG query
         ↓
-validation and prompt-injection screening
+query validation and prompt-injection screening
         ↓
-query embedding and SQL-enforced owner filtering
+query embedding and SQL-enforced owner-scoped retrieval
         ↓
-database read-transaction release
+immutable chunk results and database read-transaction release
         ↓
 whole-chunk context budgeting and source numbering
         ↓
-structured grounded answer generation
+structured answer generation from minimal context
         ↓
-server-side citation validation and safe source mapping
+provider and service-level citation validation
+        ↓
+answer with server-owned metadata for cited sources only
 ```
 
-Unlike a normal RAG chatbot, this project is designed to include security controls for:
+The answer model receives only the query, source numbers, and selected chunk text. No usable context skips generation and produces the fixed insufficient-context response; model-declared insufficiency produces the same response. Valid citations establish reference consistency, not semantic proof that every claim is supported.
 
-- Prompt injection detection
-- System prompt leakage attempts
-- Cross-user document access prevention
-- Role-based access control
-- Retrieval filtering
-- Output filtering
-- Audit logging
-- Security event monitoring
+Blocked uploads and RAG queries also produce minimized security events through a separate, best-effort audit transaction. Audit failures do not change the original rejection decision.
+
+Authorization stays in application code and PostgreSQL, not in model instructions. See [Security Policy](SECURITY.md) for trust boundaries, validation details, and limitations.
 
 ## Tech Stack
 
-- Python 3.12
-- FastAPI
-- Pydantic
-- PostgreSQL 16
-- pgvector
-- OpenAI Python SDK, Embeddings API, and Responses API
-- SQLAlchemy
-- Alembic
-- pwdlib with Argon2
-- PyJWT
-- Docker Compose
-- pytest
-- React frontend planned
+- Python 3.12, FastAPI, Pydantic
+- PostgreSQL 16, pgvector, SQLAlchemy, Alembic
+- OpenAI Python SDK, Embeddings API, Responses API
+- Argon2id through pwdlib, PyJWT
+- Docker Compose, pytest
 
 ## Implemented Features
 
-- FastAPI application foundation and OpenAPI documentation
-- PostgreSQL 16 development database through Docker Compose
-- pgvector extension setup
-- SQLAlchemy database sessions and models
-- Alembic schema migrations
-- PostgreSQL-backed user registration
-- Argon2id password hashing
-- JWT bearer-token login
-- Protected current-user endpoint
-- Database-backed `user` and `admin` roles
-- Database constraints that reject unsupported roles
-- Default `user` role for newly registered accounts
-- Registration protection against client-supplied roles
-- Reusable FastAPI role-authorization dependencies
-- Admin-only user-list endpoint
-- Unit, route, security, and PostgreSQL integration tests
-- Authenticated `.txt` and `.md` document uploads
-- Configurable upload-size and chunking limits
-- Bounded file reads and UTF-8 content validation
-- Safe filename normalization and extension validation
-- Deterministic overlapping text chunking
-- PostgreSQL-backed document and chunk persistence
-- Database-enforced document ownership relationships
-- Owner-scoped document listing and metadata retrieval
-- Cross-user document access prevention
-- Atomic document and chunk creation with rollback on database failure
-- Deterministic rule-based prompt-injection detection
-- Configurable prompt-injection blocking threshold
-- Detection of instruction overrides, system-prompt extraction, role manipulation, security bypasses, and data-exfiltration requests
-- Unicode compatibility, case, whitespace, and zero-width-character normalization for security analysis
-- Prompt-injection scanning before document chunking or persistence
-- Generic rejection responses that do not expose detector scores or matched rules
-- PostgreSQL integration tests proving blocked documents and chunks are not persisted
-- Validated OpenAI API-key and embedding-model configuration
-- Application-defined embedding-provider boundary using structural typing
-- Synchronous OpenAI embedding generation with bounded request batches
-- Provider-response ordering, count, dimension, finite-value, and zero-vector validation
-- Fixed 1,536-dimension embeddings for `text-embedding-3-small`
-- Non-null pgvector embeddings stored with every document chunk
-- HNSW cosine-similarity index for document-chunk embeddings
-- Generic `503 Service Unavailable` responses for embedding-service failures
-- Pre-persistence embedding generation so provider failures do not create partial database records
-- Deterministic unit and PostgreSQL integration tests that do not contact OpenAI
-- Authenticated `POST /retrieval/search` endpoint
-- Whitespace-normalized queries limited to 2,000 characters
-- Bounded retrieval with a default `top_k` of 5 and maximum of 20
-- SQL-enforced document ownership before similarity ranking and limiting
-- Cosine-similarity ranking over pgvector chunk embeddings
-- Transaction-local strict HNSW iterative scanning for filtered retrieval
-- Safe retrieval responses containing approved chunk and source fields only
-- Cross-user isolation tests using deliberately closer foreign vectors
-- End-to-end tests covering upload, embedding, storage, query embedding, and retrieval
-- Authenticated and stateless `POST /rag/answer` endpoint
-- Query-time prompt-injection screening before embedding, retrieval, or answer generation
-- Server-controlled retrieval, context, and answer-token limits
-- Whole-chunk context selection without partial chunk splitting
-- Database read-transaction release before the answer-provider request
-- Application-defined answer-provider boundary using structural typing
-- Structured OpenAI Responses API output with `store=False` and explicit reasoning effort
-- Minimal model context containing only source numbers and chunk text
-- Provider-side validation of response status, refusals, structured output, and citations
-- Server-owned mapping from cited source numbers to safe source metadata
-- Deterministic insufficient-context responses that skip answer generation when no context fits
-- Generic public failures that do not expose provider or detector details
-- Integration tests proving foreign-owned chunks never reach the answer provider
-- PostgreSQL-backed security-event audit logging
-- Audit events for failed logins, authorization denials, and blocked prompt-injection attempts
-- Data-minimized event details that exclude passwords, tokens, document text, and query text
-- Isolated audit transactions that cannot change the original security decision
-- Admin-only security-event listing with bounded, newest-first results
-- Database constraints for supported event types and JSON-object details
-- Integration tests proving security events persist and remain reviewable
-
-## Roadmap
-
-- Contextual and model-assisted prompt-injection defenses
-- Admin dashboard
-- Adversarial test suite
-- More advanced token-aware and structure-aware chunking
-
+- Authentication and authorization: PostgreSQL-backed users, Argon2id passwords, expiring JWTs, and database-enforced user/admin roles.
+- Document ingestion: bounded UTF-8 text and Markdown uploads, overlapping chunks, and atomic document/vector persistence.
+- Prompt-injection screening: deterministic rules and Unicode normalization applied to uploads and RAG queries before downstream processing.
+- Owner-scoped retrieval: OpenAI embeddings, pgvector HNSW cosine search, and SQL ownership filtering before ranking and limiting.
+- Guarded RAG answers: bounded context, structured generation, provider-independent citation validation, and server-owned source metadata.
+- Security-event auditing: minimized records for failed logins, authorization denials, and blocked injections, with admin-only review.
+- Testing and evaluation: unit and PostgreSQL integration tests, adversarial corpora, reproducible detector metrics, and CI with migration checks.
 
 ## Project Status
 
-Current capabilities include:
-
-- PostgreSQL 16 through Docker Compose
-- pgvector 0.8.2
-- SQLAlchemy connection and session management
-- Alembic schema migrations
-- Normalized and unique usernames
-- Argon2id password hashing
-- Signed and expiring JWT access tokens
-- Bearer-token protected routes
-- Database-backed active-user validation
-- Database-backed `user` and `admin` roles
-- Reusable role-authorization dependencies
-- Admin-only API routes
-- Immediate enforcement of role changes on subsequent requests
-- Unit and PostgreSQL integration tests
-- Authenticated text and Markdown document uploads
-- Configurable upload-size enforcement
-- UTF-8 document validation
-- Deterministic overlapping text chunking
-- PostgreSQL-backed documents and chunks
-- Owner-scoped document listing and metadata retrieval
-- Cross-user document access prevention
-- Database constraints and cascading document cleanup
-- Rule-based prompt-injection risk scoring
-- Validated and configurable blocking threshold
-- Pre-persistence scanning of uploaded document content
-- Generic `422 Unprocessable Content` responses for blocked documents
-- Database-backed verification that blocked content is not persisted
-- Batched OpenAI embedding generation through an application-defined provider boundary
-- Fixed-dimension vector validation before persistence
-- pgvector-backed chunk embeddings
-- HNSW cosine-similarity indexing
-- Generic handling of unavailable or invalid embedding-provider responses
-- Authenticated owner-scoped semantic search
-- Query embedding through the shared provider boundary
-- SQL ownership filtering before `top_k`
-- Cosine-similarity scores and source-aware chunk responses
-- Strict HNSW iterative scanning for owner-filtered searches
-- Guarded, citation-backed RAG answers through the Responses API
-- Fail-fast prompt-injection enforcement for RAG queries
-- Bounded, minimally disclosed context sent to the answer provider
-- Structured answer and citation validation
-- Server-controlled source metadata for cited chunks only
-- Deterministic insufficient-context behavior
-- Persistent audit events for selected security-sensitive failures
-- Failed-login logging without revealing whether an account exists
-- Authorization-denial logging with required and actual roles
-- Prompt-injection block logging for document uploads and RAG queries
-- Admin-only, bounded security-event review
-
-Document ingestion, text chunking, prompt-injection screening, embedding generation, pgvector-backed chunk indexing, owner-scoped semantic retrieval, guarded RAG answer generation, and selected security-event audit logging are implemented. Contextual detection, model-assisted defenses, automated monitoring, and the broader adversarial test suite remain under development.
-
+The backend supports an end-to-end upload, retrieval, and cited-answer workflow. This is a local portfolio project, not a production-hardened security product. Detector limitations and evaluation results are documented in [Security Policy](SECURITY.md) and [Adversarial Evaluation](#adversarial-tests-and-detector-evaluation).
 
 ## Local Development
 
@@ -242,7 +118,11 @@ Generate a local JWT signing secret:
 
 ```bash
 openssl rand -hex 32
+```
 
+Set it in `.env`:
+
+```env
 RAG_FIREWALL_SECRET_KEY=your-generated-secret
 RAG_FIREWALL_ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
@@ -333,9 +213,9 @@ Open:
 | `GET` | `/admin/users` | Return a safe list of registered users | Administrator |
 | `GET` | `/admin/security-events` | Return a bounded, newest-first list of security events | Administrator |
 
-The security-event endpoint returns 50 events by default and accepts a server-bounded `limit` between 1 and 100. Recorded events contain derived security evidence rather than raw credentials, access tokens, uploaded document content, or submitted RAG queries.
+Security-event listing defaults to 50 records (`limit`: 1–100). Audit records exclude credentials, tokens, and document/query text.
 
-New accounts always receive the `user` role. Registration requests cannot assign the `admin` role.
+New accounts receive `user`; registration cannot assign `admin`.
 
 For local development, an existing user can be promoted through PostgreSQL:
 
@@ -354,31 +234,11 @@ docker compose exec db psql \
 | `GET` | `/documents` | List metadata for the current user's documents | Authenticated user |
 | `GET` | `/documents/{document_id}` | Return metadata for an owned document | Document owner |
 
-Uploaded documents are associated with the authenticated user. The client cannot select a different owner.
+Ownership comes from the authenticated user. These endpoints return metadata, not original text, chunks, or owner IDs; foreign and nonexistent documents both return `404`.
 
-Document responses contain approved metadata only. Original document content, chunks, and internal ownership identifiers are not returned by these endpoints.
+Uploads are screened before chunking and embedding. Accepted chunks receive 1,536-dimension vectors and are persisted atomically with the document; HNSW indexes support cosine search.
 
-Requests for nonexistent documents and documents owned by another user both return `404 Not Found`.
-
-Uploaded document text is screened for prompt-injection signals after UTF-8 validation and before chunking or database persistence. Documents that meet the configured blocking threshold receive:
-
-```json
-{
-  "detail": "Document rejected by prompt-injection policy"
-}
-```
-
-Accepted documents are divided into overlapping chunks and embedded before the database transaction begins. Every stored chunk receives a 1,536-dimension vector, and PostgreSQL indexes those vectors with HNSW using cosine distance.
-
-If embedding generation is unavailable or returns an invalid result, the upload receives:
-
-```json
-{
-  "detail": "Embedding service is unavailable"
-}
-```
-
-Internal provider errors are not returned to clients, and embedding failures do not create document or chunk records.
+Blocked content returns `422` with `"Document rejected by prompt-injection policy"`. Embedding failures return `503` with `"Embedding service is unavailable"` and leave no partial document/chunk records.
 
 ### Semantic retrieval endpoint
 
@@ -412,19 +272,9 @@ Example response:
 }
 ```
 
-The authenticated user's database UUID is the only source of ownership. Clients cannot provide an `owner_id`, and administrators do not automatically bypass document ownership.
+Queries are limited to 2,000 characters; `top_k` defaults to 5 and permits 1–20. SQL filters by the authenticated owner before ranking and limiting; clients cannot override ownership, and administrators receive no ownership bypass.
 
-Ownership filtering occurs inside PostgreSQL before similarity ranking and `top_k` are applied. Retrieval responses exclude owner identifiers and embedding vectors.
-
-An owner with no stored chunks receives:
-
-```json
-{
-  "results": []
-}
-```
-
-Semantic retrieval embeds and ranks the query but does not invoke an answer model or generate an answer. Use the guarded RAG endpoint when a citation-backed answer is required.
+Results include chunk text but exclude owner IDs and embeddings. No owned chunks yields `{"results": []}`. This endpoint performs search only; use `/rag/answer` for generation.
 
 ### Guarded RAG answer endpoint
 
@@ -459,9 +309,9 @@ Example answered response:
 }
 ```
 
-The client supplies only the query. Retrieval count, owner identity, context budget, model, and output-token limit remain under server control. The query is screened for prompt injection before embedding or document retrieval, and ownership is enforced inside the retrieval query before ranking and limiting.
+Only `query` is client-controlled; retrieval count, ownership, context, model, and token limits are server-controlled. Screening precedes embedding and owner-scoped retrieval.
 
-Only a minimal context containing source numbers and chunk text is sent to the answer provider. UUIDs, filenames, ownership identifiers, similarity values, and embedding vectors remain under server control. The response returns metadata for cited sources only; it does not expose chunk content, ownership identifiers, or embeddings.
+Generation receives the query, source numbers, and selected text—not IDs, filenames, similarity values, or vectors. Citations are validated before server-owned metadata is returned for cited sources only.
 
 If no usable context is available, or the model reports that the supplied context is insufficient, the endpoint returns the same deterministic response:
 
@@ -498,6 +348,42 @@ python -m pytest backend/tests -v
 ```
 
 Automated tests use deterministic fake embedding and answer providers. Running the test suite does not make OpenAI API requests or incur provider charges.
+
+### Adversarial tests and detector evaluation
+
+The suite lives in `backend/tests/adversarial/`. Run its offline tests:
+
+```bash
+python -m pytest backend/tests/adversarial -m "not integration" -v
+```
+
+Run its PostgreSQL pipeline tests after starting the database and applying migrations:
+
+```bash
+python -m pytest backend/tests/adversarial -m integration -v
+```
+
+Generate the detector report without PostgreSQL or an API key:
+
+```bash
+python -m backend.tests.adversarial.report
+```
+
+The offline report uses corpus schema version 1 and threshold 50, independent of local settings. It groups results by mode, category, and tag, listing error case IDs without raw text or external model calls.
+
+The current 49-case corpus contains 32 regression cases and 17 exploratory evaluation cases:
+
+| Corpus group | Malicious blocked | Benign allowed |
+| --- | --- | --- |
+| Regression | 18/18 | 14/14 |
+| Exploratory evaluation | 0/7 | 0/10 |
+| Overall | 18/25 (72.00%) | 14/24 (58.33%) |
+
+False-negative rate: **28.00%**. False-positive rate: **41.67%**. This small, curated, implementation-aware corpus is not a real-world accuracy estimate. Update the baseline when the corpus, detector, or threshold changes.
+
+Regression decisions are asserted; exploratory errors are reported rather than required to disappear for pytest to pass. Passing tests therefore does not mean perfect detection.
+
+Pipeline tests cover blocked requests, persistence and audit safeguards, a benign upload-to-answer workflow, and invalid provider citations. Providers are fakes: these checks do not measure live-model injection resistance, embedding quality, or semantic grounding. Existing CI discovers the tests through their integration markers; see [test evidence and limitations](SECURITY.md#test-evidence-and-evaluation-limits).
 
 ### Stop PostgreSQL
 
